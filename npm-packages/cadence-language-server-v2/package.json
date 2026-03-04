@@ -1,0 +1,25 @@
+{
+  "name": "@onflow/cadence-language-server-v2",
+  "version": "0.1.0",
+  "description": "Cadence Language Server v2 — WASM + Web Worker bridge",
+  "homepage": "https://github.com/onflow/cadence-tools",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/onflow/cadence-tools.git"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist/**/*"
+  ],
+  "scripts": {
+    "build:wasm": "cd ../../languageserver && GOARCH=wasm GOOS=js go build -tags no_cgo -o ../npm-packages/cadence-language-server-v2/dist/cadence-language-server.wasm ./cmd/lsp-v2/",
+    "build:ts": "tsc",
+    "build": "npm run build:ts && npm run build:wasm",
+    "test": "echo \"No tests yet\" && exit 0"
+  },
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "typescript": "^5.2.2"
+  }
+}
