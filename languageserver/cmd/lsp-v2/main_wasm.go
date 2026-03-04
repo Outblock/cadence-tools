@@ -24,16 +24,22 @@ package main
 import (
 	"time"
 
+	"github.com/onflow/cadence-tools/languageserver/resolver"
 	"github.com/onflow/cadence-tools/languageserver/server2"
 	"github.com/onflow/cadence-tools/languageserver/transport"
 )
 
 func main() {
+	// JS host provides import resolution via global functions:
+	//   __CADENCE_LSP_RESOLVE_ADDRESS__(locationID) => string | undefined
+	//   __CADENCE_LSP_RESOLVE_STRING__(locationID) => string | undefined
+	importResolver := resolver.NewCompositeResolver(
+		resolver.NewJSResolver("__CADENCE_LSP_RESOLVE_STRING__"),
+		resolver.NewJSResolver("__CADENCE_LSP_RESOLVE_ADDRESS__"),
+	)
+
 	config := server2.ServerConfig{
-		// In WASM mode we start with no import resolver (nil).
-		// The JS host will provide imports via a JS-backed resolver
-		// wired through the WASM bridge in a follow-up change.
-		ImportResolver: nil,
+		ImportResolver: importResolver,
 		CacheCapacity:  128,
 		DebounceDelay:  200 * time.Millisecond,
 	}
