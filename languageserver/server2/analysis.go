@@ -145,8 +145,15 @@ func singleLocationHandler(identifiers []ast.Identifier, location common.Locatio
 	}
 	result := make([]sema.ResolvedLocation, len(identifiers))
 	for i, id := range identifiers {
+		loc := common.AddressLocation{Name: id.Identifier}
+		// Preserve the address from the original location so that
+		// address-based imports (e.g. import X from 0xADDR) keep
+		// their address for the import resolver.
+		if addrLoc, ok := location.(common.AddressLocation); ok {
+			loc.Address = addrLoc.Address
+		}
 		result[i] = sema.ResolvedLocation{
-			Location:    common.AddressLocation{Name: id.Identifier},
+			Location:    loc,
 			Identifiers: []ast.Identifier{id},
 		}
 	}
