@@ -2,6 +2,8 @@ package server2
 
 import (
 	"context"
+	"fmt"
+	"os"
 
 	"github.com/onflow/cadence/ast"
 	"github.com/onflow/cadence/common"
@@ -216,10 +218,12 @@ func Analyze(
 		},
 		LocationHandler: singleLocationHandler,
 		ImportHandler: func(checker *sema.Checker, importedLocation common.Location, importRange ast.Range) (sema.Import, error) {
+			fmt.Fprintf(os.Stderr, "[import] resolving %T(%s)\n", importedLocation, importedLocation.ID())
+
 			// Check cache first.
 			cacheKey := CanonicalCacheKey(importedLocation)
 			if entry, found := snap.Cache.Get(cacheKey); found && entry.Valid && entry.Checker != nil {
-				// Record dependency.
+				fmt.Fprintf(os.Stderr, "[import] cache hit: %s\n", cacheKey)
 				snap.DepGraph.AddEdge(uri, cacheKey)
 				return sema.ElaborationImport{
 					Elaboration: entry.Checker.Elaboration,
@@ -233,23 +237,30 @@ func Analyze(
 
 			code, err := importResolver.ResolveImport(ctx, importedLocation)
 			if err != nil {
+				fmt.Fprintf(os.Stderr, "[import] resolve error for %s: %v\n", importedLocation.ID(), err)
 				return nil, err
 			}
+			fmt.Fprintf(os.Stderr, "[import] resolved %s (%d bytes)\n", importedLocation.ID(), len(code))
 
 			// Parse the imported code.
 			importedProgram, parseErr := parser.ParseProgram(nil, []byte(code), parser.Config{})
 			if parseErr != nil || importedProgram == nil {
+				fmt.Fprintf(os.Stderr, "[import] parse error for %s: %v\n", importedLocation.ID(), parseErr)
 				return nil, parseErr
 			}
 
 			// Create sub-checker from parent.
 			subChecker, err := checker.SubChecker(importedProgram, importedLocation)
 			if err != nil {
+				fmt.Fprintf(os.Stderr, "[import] sub-checker error for %s: %v\n", importedLocation.ID(), err)
 				return nil, err
 			}
 
 			// Check the imported program.
-			_ = subChecker.Check()
+			checkErr := subChecker.Check()
+			if checkErr != nil {
+				fmt.Fprintf(os.Stderr, "[import] check errors for %s: %v\n", importedLocation.ID(), checkErr)
+			}
 
 			// Cache result.
 			snap.Cache.Put(cacheKey, &CheckerEntry{
