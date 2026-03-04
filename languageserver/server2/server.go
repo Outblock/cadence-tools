@@ -5,6 +5,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/onflow/cadence/sema"
+
 	"github.com/onflow/cadence-tools/languageserver/protocol"
 	"github.com/onflow/cadence-tools/languageserver/resolver"
 )
@@ -28,6 +30,17 @@ type ServerV2 struct {
 
 	connMu sync.RWMutex
 	conn   protocol.Conn
+
+	// Completion resolution state (protected by mutexes)
+	memberResolversMu sync.RWMutex
+	memberResolvers   map[DocumentURI]map[string]sema.MemberResolver
+
+	rangesMu sync.RWMutex
+	ranges   map[DocumentURI]map[string]sema.Range
+
+	// Code action resolution state
+	codeActionsResolversMu sync.RWMutex
+	codeActionsResolvers   map[DocumentURI]map[string]CodeActionResolver
 }
 
 // Compile-time check that ServerV2 implements protocol.Handler.
@@ -46,10 +59,13 @@ func NewServerV2(config ServerConfig) *ServerV2 {
 	}
 
 	return &ServerV2{
-		config:    config,
-		host:      NewAnalysisHost(capacity),
-		debouncer: debouncer,
-		cancels:   make(map[DocumentURI]context.CancelFunc),
+		config:               config,
+		host:                 NewAnalysisHost(capacity),
+		debouncer:            debouncer,
+		cancels:              make(map[DocumentURI]context.CancelFunc),
+		memberResolvers:      make(map[DocumentURI]map[string]sema.MemberResolver),
+		ranges:               make(map[DocumentURI]map[string]sema.Range),
+		codeActionsResolvers: make(map[DocumentURI]map[string]CodeActionResolver),
 	}
 }
 
@@ -217,61 +233,7 @@ func convertDiagnostic(d Diagnostic) protocol.Diagnostic {
 	}
 }
 
-// --- Stub handlers (return nil/zero values for now) ---
-
-func (s *ServerV2) Hover(conn protocol.Conn, params *protocol.TextDocumentPositionParams) (*protocol.Hover, error) {
-	return nil, nil
-}
-
-func (s *ServerV2) Definition(conn protocol.Conn, params *protocol.TextDocumentPositionParams) (*protocol.Location, error) {
-	return nil, nil
-}
-
-func (s *ServerV2) SignatureHelp(conn protocol.Conn, params *protocol.TextDocumentPositionParams) (*protocol.SignatureHelp, error) {
-	return nil, nil
-}
-
-func (s *ServerV2) DocumentHighlight(conn protocol.Conn, params *protocol.TextDocumentPositionParams) ([]*protocol.DocumentHighlight, error) {
-	return nil, nil
-}
-
-func (s *ServerV2) Rename(conn protocol.Conn, params *protocol.RenameParams) (*protocol.WorkspaceEdit, error) {
-	return nil, nil
-}
-
-func (s *ServerV2) CodeAction(conn protocol.Conn, params *protocol.CodeActionParams) ([]*protocol.CodeAction, error) {
-	return nil, nil
-}
-
-func (s *ServerV2) CodeLens(conn protocol.Conn, params *protocol.CodeLensParams) ([]*protocol.CodeLens, error) {
-	return nil, nil
-}
-
-func (s *ServerV2) Completion(conn protocol.Conn, params *protocol.CompletionParams) ([]*protocol.CompletionItem, error) {
-	return nil, nil
-}
-
-func (s *ServerV2) ResolveCompletionItem(conn protocol.Conn, item *protocol.CompletionItem) (*protocol.CompletionItem, error) {
-	return nil, nil
-}
-
-func (s *ServerV2) ExecuteCommand(conn protocol.Conn, params *protocol.ExecuteCommandParams) (any, error) {
-	return nil, nil
-}
-
-func (s *ServerV2) DidChangeConfiguration(conn protocol.Conn, d *protocol.DidChangeConfigurationParams) (any, error) {
-	return nil, nil
-}
-
-func (s *ServerV2) DocumentSymbol(conn protocol.Conn, params *protocol.DocumentSymbolParams) ([]*protocol.DocumentSymbol, error) {
-	return nil, nil
-}
-
-func (s *ServerV2) DocumentLink(conn protocol.Conn, params *protocol.DocumentLinkParams) ([]*protocol.DocumentLink, error) {
-	return nil, nil
-}
-
-func (s *ServerV2) InlayHint(conn protocol.Conn, params *protocol.InlayHintParams) ([]*protocol.InlayHint, error) {
+func (s *ServerV2) DidChangeConfiguration(_ protocol.Conn, _ *protocol.DidChangeConfigurationParams) (any, error) {
 	return nil, nil
 }
 

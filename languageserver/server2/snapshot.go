@@ -78,6 +78,11 @@ func (h *AnalysisHost) Cache() *LRUCheckerCache {
 	return h.cache
 }
 
+// GetDocument retrieves a document by URI from the document store.
+func (h *AnalysisHost) GetDocument(uri DocumentURI) (Document, bool) {
+	return h.docs.Get(uri)
+}
+
 // DepGraph returns the shared dependency graph.
 func (h *AnalysisHost) DepGraph() *DependencyGraph {
 	return h.depGraph
