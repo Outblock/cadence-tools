@@ -36,10 +36,27 @@ import (
 func main() {
 	cacheCapacity := pflag.IntP("cache-capacity", "c", 256, "Max number of cached checkers")
 	debounceMs := pflag.IntP("debounce", "d", 150, "Debounce delay in milliseconds")
+	rootDir := pflag.StringP("root-dir", "r", "", "Root directory containing flow.json (defaults to CWD)")
 	pflag.Parse()
 
+	// Default root-dir to CWD
+	if *rootDir == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to get working directory: %v\n", err)
+			os.Exit(1)
+		}
+		*rootDir = wd
+	}
+
+	// Compose resolvers: FlowJSON (contract names) → File (file paths)
+	importResolver := resolver.NewCompositeResolver(
+		resolver.NewFlowJSONResolver(*rootDir),
+		resolver.NewFileResolver(),
+	)
+
 	config := server2.ServerConfig{
-		ImportResolver: resolver.NewFileResolver(),
+		ImportResolver: importResolver,
 		CacheCapacity:  *cacheCapacity,
 		DebounceDelay:  time.Duration(*debounceMs) * time.Millisecond,
 	}
