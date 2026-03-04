@@ -10,10 +10,9 @@ import (
 	"github.com/onflow/cadence/common"
 )
 
-func TestFlowJSONResolver_SimpleString(t *testing.T) {
+func TestFlowJSONResolver_ContractsSection(t *testing.T) {
 	dir := t.TempDir()
 
-	// Create flow.json with simple string contract path
 	flowJSON := `{
 		"contracts": {
 			"FungibleToken": "./contracts/FungibleToken.cdc"
@@ -21,7 +20,6 @@ func TestFlowJSONResolver_SimpleString(t *testing.T) {
 	}`
 	writeFile(t, filepath.Join(dir, "flow.json"), flowJSON)
 
-	// Create the contract file
 	contractCode := `access(all) contract FungibleToken {}`
 	writeFile(t, filepath.Join(dir, "contracts", "FungibleToken.cdc"), contractCode)
 
@@ -35,14 +33,13 @@ func TestFlowJSONResolver_SimpleString(t *testing.T) {
 	}
 }
 
-func TestFlowJSONResolver_ObjectEntry(t *testing.T) {
+func TestFlowJSONResolver_ContractsObjectEntry(t *testing.T) {
 	dir := t.TempDir()
 
-	// flow.json with object-style contract entry (as flow dependencies install creates)
 	flowJSON := `{
 		"contracts": {
 			"NonFungibleToken": {
-				"source": "./cadence/contracts/NonFungibleToken/NonFungibleToken.cdc",
+				"source": "./cadence/contracts/NonFungibleToken.cdc",
 				"aliases": {"mainnet": "0x1d7e57aa55817448"}
 			}
 		}
@@ -50,7 +47,7 @@ func TestFlowJSONResolver_ObjectEntry(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "flow.json"), flowJSON)
 
 	contractCode := `access(all) contract interface NonFungibleToken {}`
-	writeFile(t, filepath.Join(dir, "cadence/contracts/NonFungibleToken/NonFungibleToken.cdc"), contractCode)
+	writeFile(t, filepath.Join(dir, "cadence/contracts/NonFungibleToken.cdc"), contractCode)
 
 	r := NewFlowJSONResolver(dir)
 	code, err := r.ResolveImport(context.Background(), common.StringLocation("NonFungibleToken"))
@@ -59,6 +56,62 @@ func TestFlowJSONResolver_ObjectEntry(t *testing.T) {
 	}
 	if code != contractCode {
 		t.Fatalf("got %q, want %q", code, contractCode)
+	}
+}
+
+func TestFlowJSONResolver_DependenciesSection(t *testing.T) {
+	dir := t.TempDir()
+
+	// Mimics what `flow dependencies install` creates
+	flowJSON := `{
+		"dependencies": {
+			"FungibleToken": {
+				"source": "mainnet://f233dcee88fe0abe.FungibleToken",
+				"hash": "abc123",
+				"aliases": {
+					"mainnet": "f233dcee88fe0abe",
+					"testnet": "9a0766d93b6608b7"
+				}
+			},
+			"ViewResolver": {
+				"source": "mainnet://1d7e57aa55817448.ViewResolver",
+				"hash": "def456",
+				"aliases": {
+					"mainnet": "1d7e57aa55817448"
+				}
+			}
+		},
+		"networks": {
+			"mainnet": "access.mainnet.nodes.onflow.org:9000"
+		}
+	}`
+	writeFile(t, filepath.Join(dir, "flow.json"), flowJSON)
+
+	// Files stored at imports/<address>/<name>.cdc
+	ftCode := `import "ViewResolver"\naccess(all) contract FungibleToken {}`
+	writeFile(t, filepath.Join(dir, "imports/f233dcee88fe0abe/FungibleToken.cdc"), ftCode)
+
+	vrCode := `access(all) contract interface ViewResolver {}`
+	writeFile(t, filepath.Join(dir, "imports/1d7e57aa55817448/ViewResolver.cdc"), vrCode)
+
+	r := NewFlowJSONResolver(dir)
+
+	// Resolve FungibleToken
+	code, err := r.ResolveImport(context.Background(), common.StringLocation("FungibleToken"))
+	if err != nil {
+		t.Fatalf("FungibleToken: unexpected error: %v", err)
+	}
+	if code != ftCode {
+		t.Fatalf("FungibleToken: got %q, want %q", code, ftCode)
+	}
+
+	// Resolve ViewResolver (transitive dependency)
+	code, err = r.ResolveImport(context.Background(), common.StringLocation("ViewResolver"))
+	if err != nil {
+		t.Fatalf("ViewResolver: unexpected error: %v", err)
+	}
+	if code != vrCode {
+		t.Fatalf("ViewResolver: got %q, want %q", code, vrCode)
 	}
 }
 
@@ -102,8 +155,8 @@ func TestFlowJSONResolver_NoFlowJSON(t *testing.T) {
 func TestFlowJSONResolver_AutoReload(t *testing.T) {
 	dir := t.TempDir()
 
-	// Start with empty contracts
-	writeFile(t, filepath.Join(dir, "flow.json"), `{"contracts": {}}`)
+	// Start with empty
+	writeFile(t, filepath.Join(dir, "flow.json"), `{"networks": {}}`)
 
 	r := NewFlowJSONResolver(dir)
 	_, err := r.ResolveImport(context.Background(), common.StringLocation("NewContract"))
@@ -111,9 +164,16 @@ func TestFlowJSONResolver_AutoReload(t *testing.T) {
 		t.Fatalf("expected ErrNotFound, got: %v", err)
 	}
 
-	// Update flow.json with new contract (mtime changes → auto-reload)
-	writeFile(t, filepath.Join(dir, "flow.json"), `{"contracts": {"NewContract": "./new.cdc"}}`)
-	writeFile(t, filepath.Join(dir, "new.cdc"), `access(all) contract NewContract {}`)
+	// Simulate `flow dependencies install` updating flow.json
+	writeFile(t, filepath.Join(dir, "flow.json"), `{
+		"dependencies": {
+			"NewContract": {
+				"source": "mainnet://abc123.NewContract",
+				"aliases": {"mainnet": "abc123"}
+			}
+		}
+	}`)
+	writeFile(t, filepath.Join(dir, "imports/abc123/NewContract.cdc"), `access(all) contract NewContract {}`)
 
 	// Should auto-detect mtime change and reload
 	code, err := r.ResolveImport(context.Background(), common.StringLocation("NewContract"))
@@ -122,6 +182,24 @@ func TestFlowJSONResolver_AutoReload(t *testing.T) {
 	}
 	if code != `access(all) contract NewContract {}` {
 		t.Fatalf("unexpected code: %q", code)
+	}
+}
+
+func TestExtractAddressFromSource(t *testing.T) {
+	tests := []struct {
+		source string
+		want   string
+	}{
+		{"mainnet://f233dcee88fe0abe.FungibleToken", "f233dcee88fe0abe"},
+		{"testnet://9a0766d93b6608b7.FlowToken", "9a0766d93b6608b7"},
+		{"invalid", ""},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		got := extractAddressFromSource(tt.source)
+		if got != tt.want {
+			t.Errorf("extractAddressFromSource(%q) = %q, want %q", tt.source, got, tt.want)
+		}
 	}
 }
 
