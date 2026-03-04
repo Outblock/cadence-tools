@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/onflow/cadence/common"
 )
@@ -15,18 +16,26 @@ import (
 // FlowJSONResolver resolves contract-name imports (e.g. import "FungibleToken")
 // by reading the contracts section from a flow.json file. This mirrors how the
 // Flow CLI's language server resolves string imports in a project workspace.
+//
+// It auto-reloads flow.json when the file's modification time changes, so
+// contracts installed by `flow dependencies install` become available without
+// restarting the LSP.
 type FlowJSONResolver struct {
-	rootDir string
+	rootDir    string
+	configPath string
 
-	once      sync.Once
+	mu        sync.Mutex
 	contracts map[string]string // contract name → relative source path
 	loadErr   error
+	lastMod   time.Time
 }
 
 // NewFlowJSONResolver creates a resolver that reads flow.json from rootDir.
-// The flow.json is lazily loaded on first ResolveImport call.
 func NewFlowJSONResolver(rootDir string) *FlowJSONResolver {
-	return &FlowJSONResolver{rootDir: rootDir}
+	return &FlowJSONResolver{
+		rootDir:    rootDir,
+		configPath: filepath.Join(rootDir, "flow.json"),
+	}
 }
 
 // flowJSON is the minimal structure we need from flow.json.
@@ -34,27 +43,46 @@ type flowJSON struct {
 	Contracts map[string]json.RawMessage `json:"contracts"`
 }
 
-// contractEntry handles both simple string paths and object entries.
+// contractEntry handles object entries with a "source" field.
 type contractEntry struct {
 	Source string `json:"source"`
 }
 
-func (r *FlowJSONResolver) load() {
-	configPath := filepath.Join(r.rootDir, "flow.json")
-	data, err := os.ReadFile(configPath)
+// ensureLoaded reloads flow.json if it has been modified since last load.
+func (r *FlowJSONResolver) ensureLoaded() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	info, err := os.Stat(r.configPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
+			r.contracts = nil
 			r.loadErr = ErrNotFound
-		} else {
-			r.loadErr = err
+			r.lastMod = time.Time{}
+			return ErrNotFound
 		}
-		return
+		return err
+	}
+
+	// Skip reload if mtime hasn't changed.
+	if info.ModTime().Equal(r.lastMod) && r.contracts != nil {
+		return r.loadErr
+	}
+
+	// Reload.
+	r.lastMod = info.ModTime()
+	r.loadErr = nil
+
+	data, err := os.ReadFile(r.configPath)
+	if err != nil {
+		r.loadErr = err
+		return err
 	}
 
 	var cfg flowJSON
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		r.loadErr = err
-		return
+		return err
 	}
 
 	r.contracts = make(map[string]string, len(cfg.Contracts))
@@ -71,6 +99,7 @@ func (r *FlowJSONResolver) load() {
 			r.contracts[name] = entry.Source
 		}
 	}
+	return nil
 }
 
 // ResolveImport resolves a StringLocation that looks like a contract name
@@ -88,12 +117,14 @@ func (r *FlowJSONResolver) ResolveImport(_ context.Context, location common.Loca
 		return "", ErrNotFound
 	}
 
-	r.once.Do(r.load)
-	if r.loadErr != nil {
-		return "", r.loadErr
+	if err := r.ensureLoaded(); err != nil {
+		return "", err
 	}
 
+	r.mu.Lock()
 	relPath, ok := r.contracts[name]
+	r.mu.Unlock()
+
 	if !ok {
 		return "", ErrNotFound
 	}
@@ -108,12 +139,4 @@ func (r *FlowJSONResolver) ResolveImport(_ context.Context, location common.Loca
 	}
 
 	return string(data), nil
-}
-
-// Reload forces re-reading flow.json on the next ResolveImport call.
-// Useful when flow.json is updated (e.g. after flow dependencies install).
-func (r *FlowJSONResolver) Reload() {
-	r.once = sync.Once{}
-	r.contracts = nil
-	r.loadErr = nil
 }

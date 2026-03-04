@@ -99,7 +99,7 @@ func TestFlowJSONResolver_NoFlowJSON(t *testing.T) {
 	}
 }
 
-func TestFlowJSONResolver_Reload(t *testing.T) {
+func TestFlowJSONResolver_AutoReload(t *testing.T) {
 	dir := t.TempDir()
 
 	// Start with empty contracts
@@ -111,21 +111,14 @@ func TestFlowJSONResolver_Reload(t *testing.T) {
 		t.Fatalf("expected ErrNotFound, got: %v", err)
 	}
 
-	// Update flow.json with new contract
+	// Update flow.json with new contract (mtime changes → auto-reload)
 	writeFile(t, filepath.Join(dir, "flow.json"), `{"contracts": {"NewContract": "./new.cdc"}}`)
 	writeFile(t, filepath.Join(dir, "new.cdc"), `access(all) contract NewContract {}`)
 
-	// Still cached — should still fail
-	_, err = r.ResolveImport(context.Background(), common.StringLocation("NewContract"))
-	if !errors.Is(err, ErrNotFound) {
-		t.Fatalf("expected ErrNotFound before reload, got: %v", err)
-	}
-
-	// Reload and retry
-	r.Reload()
+	// Should auto-detect mtime change and reload
 	code, err := r.ResolveImport(context.Background(), common.StringLocation("NewContract"))
 	if err != nil {
-		t.Fatalf("unexpected error after reload: %v", err)
+		t.Fatalf("unexpected error after auto-reload: %v", err)
 	}
 	if code != `access(all) contract NewContract {}` {
 		t.Fatalf("unexpected code: %q", code)
