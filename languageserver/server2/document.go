@@ -48,6 +48,17 @@ func (s *DocumentStore) Delete(uri DocumentURI) {
 	delete(s.docs, uri)
 }
 
+// URIs returns all document URIs in the store.
+func (s *DocumentStore) URIs() []DocumentURI {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	uris := make([]DocumentURI, 0, len(s.docs))
+	for uri := range s.docs {
+		uris = append(uris, uri)
+	}
+	return uris
+}
+
 // Snapshot returns a shallow copy of all documents in the store.
 // Mutating the returned map does not affect the store.
 func (s *DocumentStore) Snapshot() map[DocumentURI]Document {

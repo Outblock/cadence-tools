@@ -2239,6 +2239,10 @@ func (s *Server) FoldingRange(conn protocol.Conn, params *protocol.FoldingRangeP
 	return nil, nil
 }
 
+func (s *Server) WorkspaceSymbol(conn protocol.Conn, params *protocol.WorkspaceSymbolParams) ([]protocol.SymbolInformation, error) {
+	return nil, nil
+}
+
 // Shutdown tells the server to stop accepting any new requests. This can only
 // be followed by a call to Exit, which exits the process.
 func (*Server) Shutdown(conn protocol.Conn) error {

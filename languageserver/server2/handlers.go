@@ -1245,6 +1245,49 @@ func (s *ServerV2) FoldingRange(
 	return ranges, nil
 }
 
+// --- WorkspaceSymbol ---
+
+func (s *ServerV2) WorkspaceSymbol(
+	_ protocol.Conn,
+	params *protocol.WorkspaceSymbolParams,
+) ([]protocol.SymbolInformation, error) {
+	symbols := []protocol.SymbolInformation{}
+	query := strings.ToLower(params.Query)
+
+	for _, uri := range s.host.DocumentURIs() {
+		checker := s.checkerForDocument(uri)
+		if checker == nil || checker.Program == nil {
+			continue
+		}
+
+		for _, declaration := range checker.Program.Declarations() {
+			name := declaration.DeclarationIdentifier().Identifier
+			if name == "" {
+				continue
+			}
+
+			// Filter by query (case-insensitive substring match)
+			if query != "" && !strings.Contains(strings.ToLower(name), query) {
+				continue
+			}
+
+			startPos := declaration.StartPosition()
+			endPos := declaration.EndPosition(nil)
+
+			symbols = append(symbols, protocol.SymbolInformation{
+				Name: name,
+				Kind: conversion.DeclarationKindToSymbolKind(declaration.DeclarationKind()),
+				Location: protocol.Location{
+					URI:   protocol.DocumentURI(uri),
+					Range: conversion.ASTToProtocolRange(startPos, endPos),
+				},
+			})
+		}
+	}
+
+	return symbols, nil
+}
+
 // --- ExecuteCommand ---
 
 func (s *ServerV2) ExecuteCommand(

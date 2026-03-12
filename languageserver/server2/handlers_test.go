@@ -544,3 +544,48 @@ func TestGetDocument(t *testing.T) {
 	assert.Equal(t, "hello", doc.Text)
 	assert.Equal(t, int32(1), doc.Version)
 }
+
+func TestWorkspaceSymbolReturnsMatchingSymbols(t *testing.T) {
+	srv := newTestServer()
+	conn := &mockConn{}
+	_, err := srv.Initialize(conn, &protocol.InitializeParams{})
+	require.NoError(t, err)
+
+	uri1 := protocol.DocumentURI("file:///ws1.cdc")
+	openAndCheck(t, srv, conn, uri1, `access(all) fun hello() {}`)
+
+	uri2 := protocol.DocumentURI("file:///ws2.cdc")
+	openAndCheck(t, srv, conn, uri2, `access(all) fun world() {}
+access(all) fun helper() {}`)
+
+	// Search for "hel" should match "hello" and "helper"
+	result, err := srv.WorkspaceSymbol(conn, &protocol.WorkspaceSymbolParams{
+		Query: "hel",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, len(result), "should find 'hello' and 'helper'")
+
+	names := make([]string, len(result))
+	for i, s := range result {
+		names[i] = s.Name
+	}
+	assert.Contains(t, names, "hello")
+	assert.Contains(t, names, "helper")
+}
+
+func TestWorkspaceSymbolEmptyQueryReturnsAll(t *testing.T) {
+	srv := newTestServer()
+	conn := &mockConn{}
+	_, err := srv.Initialize(conn, &protocol.InitializeParams{})
+	require.NoError(t, err)
+
+	uri := protocol.DocumentURI("file:///wsall.cdc")
+	openAndCheck(t, srv, conn, uri, `access(all) fun foo() {}
+access(all) fun bar() {}`)
+
+	result, err := srv.WorkspaceSymbol(conn, &protocol.WorkspaceSymbolParams{
+		Query: "",
+	})
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, len(result), 2)
+}

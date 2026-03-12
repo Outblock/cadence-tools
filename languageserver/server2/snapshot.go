@@ -82,6 +82,11 @@ func (h *AnalysisHost) Snapshot() *Snapshot {
 	}
 }
 
+// DocumentURIs returns the URIs of all open documents.
+func (h *AnalysisHost) DocumentURIs() []DocumentURI {
+	return h.docs.URIs()
+}
+
 // Cache returns the shared LRU checker cache.
 func (h *AnalysisHost) Cache() *LRUCheckerCache {
 	return h.cache

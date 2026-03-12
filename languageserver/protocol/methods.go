@@ -198,6 +198,14 @@ func (s *Server) handleFoldingRange(req *json.RawMessage) (any, error) {
 	return s.Handler.FoldingRange(s.conn, &params)
 }
 
+func (s *Server) handleWorkspaceSymbol(req *json.RawMessage) (any, error) {
+	var params WorkspaceSymbolParams
+	if err := json.Unmarshal(*req, &params); err != nil {
+		return nil, err
+	}
+	return s.Handler.WorkspaceSymbol(s.conn, &params)
+}
+
 func (s *Server) handleShutdown(_ *json.RawMessage) (any, error) {
 	err := s.Handler.Shutdown(s.conn)
 	return nil, err
