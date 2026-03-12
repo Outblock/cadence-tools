@@ -448,6 +448,37 @@ func TestRenameVariable(t *testing.T) {
 	}
 }
 
+func TestRenameSameFileStillWorks(t *testing.T) {
+	srv := newTestServer()
+	conn := &mockConn{}
+	_, err := srv.Initialize(conn, &protocol.InitializeParams{})
+	require.NoError(t, err)
+
+	uri := protocol.DocumentURI("file:///rename2.cdc")
+	code := `access(all) fun main() {
+    let x = 42
+    let y = x
+    let z = x
+}`
+	openAndCheck(t, srv, conn, uri, code)
+
+	result, err := srv.Rename(conn, &protocol.RenameParams{
+		TextDocument: protocol.TextDocumentIdentifier{URI: uri},
+		Position:     protocol.Position{Line: 2, Character: 12},
+		NewName:      "renamed",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	edits := result.Changes[uri]
+	// Should rename all occurrences of x
+	for _, edit := range edits {
+		assert.Equal(t, "renamed", edit.NewText)
+	}
+	// Should have multiple edits (declaration + usages)
+	assert.GreaterOrEqual(t, len(edits), 2, "should rename multiple occurrences")
+}
+
 func TestReferencesReturnsAllOccurrences(t *testing.T) {
 	srv := newTestServer()
 	conn := &mockConn{}

@@ -405,7 +405,8 @@ func (s *ServerV2) Rename(
 		occurrences = checker.PositionInfo.Occurrences.FindAll(previousPosition)
 	}
 
-	textEdits := make([]protocol.TextEdit, 0)
+	// Collect edits per URI
+	changes := make(map[protocol.DocumentURI][]protocol.TextEdit)
 
 	for _, occurrence := range occurrences {
 		origin := occurrence.Origin
@@ -413,8 +414,10 @@ func (s *ServerV2) Rename(
 			continue
 		}
 
+		// Add edits for occurrences in the current document
 		for _, occurrenceRange := range origin.Occurrences {
-			textEdits = append(textEdits,
+			changes[protocol.DocumentURI(uri)] = append(
+				changes[protocol.DocumentURI(uri)],
 				protocol.TextEdit{
 					Range: conversion.ASTToProtocolRange(
 						occurrenceRange.StartPos,
@@ -424,12 +427,23 @@ func (s *ServerV2) Rename(
 				},
 			)
 		}
+
+		// Check if the origin is from an imported file
+		defURI := s.resolveDefinitionURI(uri, origin)
+		if defURI != protocol.DocumentURI(uri) {
+			// Add edit for the declaration site in the imported file
+			changes[defURI] = append(
+				changes[defURI],
+				protocol.TextEdit{
+					Range:   conversion.ASTToProtocolRange(*origin.StartPos, *origin.EndPos),
+					NewText: params.NewName,
+				},
+			)
+		}
 	}
 
 	return &protocol.WorkspaceEdit{
-		Changes: map[protocol.DocumentURI][]protocol.TextEdit{
-			protocol.DocumentURI(uri): textEdits,
-		},
+		Changes: changes,
 	}, nil
 }
 
