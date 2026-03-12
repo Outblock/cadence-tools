@@ -1,6 +1,6 @@
 {
   "name": "@outblock/cadence-language-server",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Cadence Language Server v2 — WASM + Web Worker bridge",
   "homepage": "https://github.com/Outblock/cadence-tools",
   "repository": {
