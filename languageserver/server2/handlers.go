@@ -160,13 +160,62 @@ func (s *ServerV2) Definition(
 		return nil, nil
 	}
 
+	defURI := s.resolveDefinitionURI(uri, origin)
+
 	return &protocol.Location{
-		URI: protocol.DocumentURI(uri),
+		URI: defURI,
 		Range: conversion.ASTToProtocolRange(
 			*origin.StartPos,
 			*origin.EndPos,
 		),
 	}, nil
+}
+
+// resolveDefinitionURI determines which document a definition origin belongs to.
+// For same-file definitions it returns the current URI. For cross-file definitions
+// (imported symbols), it searches cached dependency checkers' origins to find the
+// file that owns the origin.
+func (s *ServerV2) resolveDefinitionURI(uri DocumentURI, origin *sema.Origin) protocol.DocumentURI {
+	cacheKey := CanonicalCacheKey(common.StringLocation(uri))
+	deps := s.host.DepGraph().DependenciesOf(cacheKey)
+
+	for _, depKey := range deps {
+		entry, ok := s.host.Cache().Get(depKey)
+		if !ok || entry.Checker == nil {
+			continue
+		}
+		depChecker := entry.Checker
+		if depChecker.PositionInfo == nil {
+			continue
+		}
+
+		// Check variable origins for a pointer match.
+		for _, varOrigin := range depChecker.PositionInfo.VariableOrigins {
+			if varOrigin == origin {
+				return s.checkerLocationToURI(depChecker)
+			}
+		}
+		// Check member origins for a pointer match.
+		for _, members := range depChecker.PositionInfo.MemberOrigins {
+			for _, memberOrigin := range members {
+				if memberOrigin == origin {
+					return s.checkerLocationToURI(depChecker)
+				}
+			}
+		}
+	}
+
+	return protocol.DocumentURI(uri)
+}
+
+// checkerLocationToURI converts a checker's Location to a protocol.DocumentURI.
+// For StringLocation it extracts the URI string directly; for other location types
+// it falls back to the location's ID.
+func (s *ServerV2) checkerLocationToURI(checker *sema.Checker) protocol.DocumentURI {
+	if loc, ok := checker.Location.(common.StringLocation); ok {
+		return protocol.DocumentURI(string(loc))
+	}
+	return protocol.DocumentURI(checker.Location.ID())
 }
 
 // --- References ---

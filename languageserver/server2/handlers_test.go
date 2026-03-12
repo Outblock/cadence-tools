@@ -1,12 +1,16 @@
 package server2
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/onflow/cadence/common"
+
 	"github.com/onflow/cadence-tools/languageserver/protocol"
+	"github.com/onflow/cadence-tools/languageserver/resolver"
 )
 
 // openAndCheck opens a document on the server, triggering synchronous analysis.
@@ -98,6 +102,71 @@ func TestDefinitionReturnsNilForNoChecker(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Nil(t, result)
+}
+
+func TestDefinitionSameFileRegressionWithResolveHelper(t *testing.T) {
+	srv := newTestServer()
+	conn := &mockConn{}
+	_, err := srv.Initialize(conn, &protocol.InitializeParams{})
+	require.NoError(t, err)
+
+	uri := protocol.DocumentURI("file:///def2.cdc")
+	code := `access(all) fun main() {
+    let x = 42
+    let y = x
+}`
+	openAndCheck(t, srv, conn, uri, code)
+
+	result, err := srv.Definition(conn, &protocol.TextDocumentPositionParams{
+		TextDocument: protocol.TextDocumentIdentifier{URI: uri},
+		Position:     protocol.Position{Line: 2, Character: 12},
+	})
+	require.NoError(t, err)
+	if result != nil {
+		assert.Equal(t, uri, result.URI, "same-file definition should return same URI")
+	}
+}
+
+func TestDefinitionCrossFile(t *testing.T) {
+	// Set up a server with an import resolver that maps "imported.cdc" to source code.
+	importedURI := "imported.cdc"
+	importedCode := `access(all) fun helper(): Int { return 42 }`
+
+	srv := NewServerV2(ServerConfig{
+		CacheCapacity: 64,
+		DebounceDelay: 0,
+		ImportResolver: resolver.ResolverFunc(
+			func(ctx context.Context, location common.Location) (string, error) {
+				if location.ID() == importedURI {
+					return importedCode, nil
+				}
+				return "", resolver.ErrNotFound
+			},
+		),
+	})
+	conn := &mockConn{}
+	_, err := srv.Initialize(conn, &protocol.InitializeParams{})
+	require.NoError(t, err)
+
+	mainURI := protocol.DocumentURI("file:///main.cdc")
+	mainCode := `import "imported.cdc"
+access(all) fun main(): Int {
+    return helper()
+}`
+	openAndCheck(t, srv, conn, mainURI, mainCode)
+
+	// Position on "helper" in "return helper()" (line 2, character 11)
+	result, err := srv.Definition(conn, &protocol.TextDocumentPositionParams{
+		TextDocument: protocol.TextDocumentIdentifier{URI: mainURI},
+		Position:     protocol.Position{Line: 2, Character: 11},
+	})
+	require.NoError(t, err)
+
+	if result != nil {
+		// The definition should point to the imported file, not the main file.
+		assert.Equal(t, protocol.DocumentURI(importedURI), result.URI,
+			"cross-file definition should return the imported file's URI")
+	}
 }
 
 func TestDocumentSymbolReturnsSymbols(t *testing.T) {
