@@ -98,7 +98,7 @@ func (s *ServerV2) Initialize(conn protocol.Conn, params *protocol.InitializePar
 			RenameProvider:            true,
 			CodeActionProvider:        true,
 			CodeLensProvider:          &protocol.CodeLensOptions{},
-			CompletionProvider:        &protocol.CompletionOptions{},
+			CompletionProvider:        &protocol.CompletionOptions{ResolveProvider: true},
 			DocumentSymbolProvider:    &protocol.Or_ServerCapabilities_documentSymbolProvider{Value: true},
 			DocumentLinkProvider:      &protocol.DocumentLinkOptions{},
 			InlayHintProvider:         true,
