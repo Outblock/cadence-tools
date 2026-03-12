@@ -110,6 +110,7 @@ type Handler interface {
 	FoldingRange(conn Conn, params *FoldingRangeParams) ([]*FoldingRange, error)
 	SelectionRange(conn Conn, params *SelectionRangeParams) ([]*SelectionRange, error)
 	WorkspaceSymbol(conn Conn, params *WorkspaceSymbolParams) ([]SymbolInformation, error)
+	SemanticTokensFull(conn Conn, params *SemanticTokensParams) (*SemanticTokens, error)
 	Shutdown(conn Conn) error
 	Exit(conn Conn) error
 }
@@ -192,6 +193,9 @@ func NewServer(handler Handler) *Server {
 
 	jsonrpc2Server.Methods["workspace/symbol"] =
 		server.handleWorkspaceSymbol
+
+	jsonrpc2Server.Methods["textDocument/semanticTokens/full"] =
+		server.handleSemanticTokensFull
 
 	jsonrpc2Server.Methods["shutdown"] =
 		server.handleShutdown

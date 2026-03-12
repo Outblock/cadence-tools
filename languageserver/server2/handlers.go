@@ -1451,6 +1451,26 @@ func documentHasAnyPrecedingStringsAtPosition(doc Document, options []string, li
 	return false
 }
 
+// --- SemanticTokensFull ---
+
+func (s *ServerV2) SemanticTokensFull(
+	_ protocol.Conn,
+	params *protocol.SemanticTokensParams,
+) (*protocol.SemanticTokens, error) {
+	uri := DocumentURI(params.TextDocument.URI)
+	checker := s.checkerForDocument(uri)
+	if checker == nil {
+		return nil, nil
+	}
+
+	tokens := collectSemanticTokens(checker)
+	data := encodeSemanticTokens(tokens)
+
+	return &protocol.SemanticTokens{
+		Data: data,
+	}, nil
+}
+
 // CodeActionResolver is a function that resolves code actions lazily.
 type CodeActionResolver = func() []*protocol.CodeAction
 

@@ -655,3 +655,39 @@ func TestSelectionRangeMultiplePositions(t *testing.T) {
 	assert.NotNil(t, result[0])
 	assert.NotNil(t, result[1])
 }
+
+func TestSemanticTokensFullReturnsTokenData(t *testing.T) {
+	srv := newTestServer()
+	conn := &mockConn{}
+	_, err := srv.Initialize(conn, &protocol.InitializeParams{})
+	require.NoError(t, err)
+
+	uri := protocol.DocumentURI("file:///semtok.cdc")
+	code := `access(all) fun main(): Int {
+    let x = 42
+    return x
+}`
+	openAndCheck(t, srv, conn, uri, code)
+
+	result, err := srv.SemanticTokensFull(conn, &protocol.SemanticTokensParams{
+		TextDocument: protocol.TextDocumentIdentifier{URI: uri},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	// Data should be non-empty and a multiple of 5
+	assert.NotEmpty(t, result.Data)
+	assert.Equal(t, 0, len(result.Data)%5, "semantic tokens data must be multiple of 5")
+}
+
+func TestSemanticTokensFullReturnsNilForNoChecker(t *testing.T) {
+	srv := newTestServer()
+	conn := &mockConn{}
+	_, err := srv.Initialize(conn, &protocol.InitializeParams{})
+	require.NoError(t, err)
+
+	result, err := srv.SemanticTokensFull(conn, &protocol.SemanticTokensParams{
+		TextDocument: protocol.TextDocumentIdentifier{URI: "file:///noexist.cdc"},
+	})
+	require.NoError(t, err)
+	assert.Nil(t, result)
+}

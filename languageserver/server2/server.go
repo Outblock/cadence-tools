@@ -106,6 +106,13 @@ func (s *ServerV2) Initialize(conn protocol.Conn, params *protocol.InitializePar
 			SelectionRangeProvider:    &protocol.Or_ServerCapabilities_selectionRangeProvider{Value: true},
 			WorkspaceSymbolProvider:   &protocol.Or_ServerCapabilities_workspaceSymbolProvider{Value: true},
 			ExecuteCommandProvider:    &protocol.ExecuteCommandOptions{},
+			SemanticTokensProvider: &protocol.SemanticTokensOptions{
+				Legend: protocol.SemanticTokensLegend{
+					TokenTypes:     semanticTokenTypes,
+					TokenModifiers: semanticTokenModifiers,
+				},
+				Full: &protocol.Or_SemanticTokensOptions_full{Value: true},
+			},
 		},
 	}, nil
 }
