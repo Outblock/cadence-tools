@@ -589,3 +589,69 @@ access(all) fun bar() {}`)
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(result), 2)
 }
+
+func TestSelectionRangeReturnsNestedRanges(t *testing.T) {
+	srv := newTestServer()
+	conn := &mockConn{}
+	_, err := srv.Initialize(conn, &protocol.InitializeParams{})
+	require.NoError(t, err)
+
+	uri := protocol.DocumentURI("file:///sel.cdc")
+	code := `access(all) fun main() {
+    let x = 42
+}`
+	openAndCheck(t, srv, conn, uri, code)
+
+	result, err := srv.SelectionRange(conn, &protocol.SelectionRangeParams{
+		TextDocument: protocol.TextDocumentIdentifier{URI: uri},
+		Positions: []protocol.Position{
+			{Line: 1, Character: 10}, // on "42"
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, result, 1)
+	require.NotNil(t, result[0])
+
+	// Should have at least 2 levels: the expression and the function body
+	assert.NotNil(t, result[0].Parent, "should have parent selection range")
+}
+
+func TestSelectionRangeReturnsNilForNoChecker(t *testing.T) {
+	srv := newTestServer()
+	conn := &mockConn{}
+	_, err := srv.Initialize(conn, &protocol.InitializeParams{})
+	require.NoError(t, err)
+
+	result, err := srv.SelectionRange(conn, &protocol.SelectionRangeParams{
+		TextDocument: protocol.TextDocumentIdentifier{URI: "file:///noexist.cdc"},
+		Positions:    []protocol.Position{{Line: 0, Character: 0}},
+	})
+	require.NoError(t, err)
+	assert.Nil(t, result)
+}
+
+func TestSelectionRangeMultiplePositions(t *testing.T) {
+	srv := newTestServer()
+	conn := &mockConn{}
+	_, err := srv.Initialize(conn, &protocol.InitializeParams{})
+	require.NoError(t, err)
+
+	uri := protocol.DocumentURI("file:///selmulti.cdc")
+	code := `access(all) fun main() {
+    let x = 42
+    let y = "hello"
+}`
+	openAndCheck(t, srv, conn, uri, code)
+
+	result, err := srv.SelectionRange(conn, &protocol.SelectionRangeParams{
+		TextDocument: protocol.TextDocumentIdentifier{URI: uri},
+		Positions: []protocol.Position{
+			{Line: 1, Character: 10}, // on "42"
+			{Line: 2, Character: 12}, // on "hello"
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, result, 2)
+	assert.NotNil(t, result[0])
+	assert.NotNil(t, result[1])
+}

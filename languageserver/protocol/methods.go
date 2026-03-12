@@ -198,6 +198,14 @@ func (s *Server) handleFoldingRange(req *json.RawMessage) (any, error) {
 	return s.Handler.FoldingRange(s.conn, &params)
 }
 
+func (s *Server) handleSelectionRange(req *json.RawMessage) (any, error) {
+	var params SelectionRangeParams
+	if err := json.Unmarshal(*req, &params); err != nil {
+		return nil, err
+	}
+	return s.Handler.SelectionRange(s.conn, &params)
+}
+
 func (s *Server) handleWorkspaceSymbol(req *json.RawMessage) (any, error) {
 	var params WorkspaceSymbolParams
 	if err := json.Unmarshal(*req, &params); err != nil {

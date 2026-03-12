@@ -1174,6 +1174,84 @@ func (s *ServerV2) InlayHint(
 	return inlayHints, nil
 }
 
+// --- SelectionRange ---
+
+func (s *ServerV2) SelectionRange(
+	_ protocol.Conn,
+	params *protocol.SelectionRangeParams,
+) ([]*protocol.SelectionRange, error) {
+	uri := DocumentURI(params.TextDocument.URI)
+	checker := s.checkerForDocument(uri)
+	if checker == nil {
+		return nil, nil
+	}
+
+	results := make([]*protocol.SelectionRange, 0, len(params.Positions))
+
+	for _, pos := range params.Positions {
+		selRange := buildSelectionRange(checker.Program, pos)
+		results = append(results, selRange)
+	}
+
+	return results, nil
+}
+
+// buildSelectionRange finds all AST elements containing the given position
+// and builds a nested SelectionRange chain from innermost to outermost.
+func buildSelectionRange(program *ast.Program, pos protocol.Position) *protocol.SelectionRange {
+	// Collect all elements that contain the position.
+	// ast.Inspect visits depth-first (parents before children),
+	// so ranges are collected outermost-first.
+	var ranges []protocol.Range
+
+	ast.Inspect(program, func(element ast.Element) bool {
+		if element == nil {
+			return false
+		}
+
+		startPos := element.StartPosition()
+		endPos := element.EndPosition(nil)
+
+		elemRange := conversion.ASTToProtocolRange(startPos, endPos)
+
+		if positionInRange(pos, elemRange) {
+			ranges = append(ranges, elemRange)
+			return true // descend into children for narrower ranges
+		}
+		return false // position not in this subtree
+	})
+
+	if len(ranges) == 0 {
+		return nil
+	}
+
+	// Build chain from outermost to innermost.
+	// Each new node becomes the innermost, with Parent pointing to the previous (outer) node.
+	var current *protocol.SelectionRange
+	for _, r := range ranges {
+		current = &protocol.SelectionRange{
+			Range:  r,
+			Parent: current,
+		}
+	}
+	// current is now the innermost range, with parent chain going outward.
+	return current
+}
+
+// positionInRange checks if a position is within a range (inclusive).
+func positionInRange(pos protocol.Position, r protocol.Range) bool {
+	if pos.Line < r.Start.Line || pos.Line > r.End.Line {
+		return false
+	}
+	if pos.Line == r.Start.Line && pos.Character < r.Start.Character {
+		return false
+	}
+	if pos.Line == r.End.Line && pos.Character > r.End.Character {
+		return false
+	}
+	return true
+}
+
 // --- FoldingRange ---
 
 func (s *ServerV2) FoldingRange(

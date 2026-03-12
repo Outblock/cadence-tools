@@ -2239,6 +2239,10 @@ func (s *Server) FoldingRange(conn protocol.Conn, params *protocol.FoldingRangeP
 	return nil, nil
 }
 
+func (s *Server) SelectionRange(conn protocol.Conn, params *protocol.SelectionRangeParams) ([]*protocol.SelectionRange, error) {
+	return nil, nil
+}
+
 func (s *Server) WorkspaceSymbol(conn protocol.Conn, params *protocol.WorkspaceSymbolParams) ([]protocol.SymbolInformation, error) {
 	return nil, nil
 }

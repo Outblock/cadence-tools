@@ -103,6 +103,7 @@ func (s *ServerV2) Initialize(conn protocol.Conn, params *protocol.InitializePar
 			DocumentLinkProvider:      &protocol.DocumentLinkOptions{},
 			InlayHintProvider:         true,
 			FoldingRangeProvider:      &protocol.Or_ServerCapabilities_foldingRangeProvider{Value: true},
+			SelectionRangeProvider:    &protocol.Or_ServerCapabilities_selectionRangeProvider{Value: true},
 			WorkspaceSymbolProvider:   &protocol.Or_ServerCapabilities_workspaceSymbolProvider{Value: true},
 			ExecuteCommandProvider:    &protocol.ExecuteCommandOptions{},
 		},
