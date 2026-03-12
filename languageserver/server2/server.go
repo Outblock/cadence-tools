@@ -3,6 +3,7 @@ package server2
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/onflow/cadence/sema"
@@ -10,6 +11,13 @@ import (
 	"github.com/onflow/cadence-tools/languageserver/protocol"
 	"github.com/onflow/cadence-tools/languageserver/resolver"
 )
+
+// cancelEntry pairs a cancel function with a unique token so we can
+// identify whether the entry in the map still belongs to our goroutine.
+type cancelEntry struct {
+	cancel context.CancelFunc
+	token  uint64
+}
 
 // ServerConfig holds configuration for the language server.
 type ServerConfig struct {
@@ -26,7 +34,8 @@ type ServerV2 struct {
 	debouncer *Debouncer
 
 	cancelsMu sync.Mutex
-	cancels   map[DocumentURI]context.CancelFunc
+	cancels   map[DocumentURI]cancelEntry
+	nextToken atomic.Uint64
 
 	connMu sync.RWMutex
 	conn   protocol.Conn
@@ -62,7 +71,7 @@ func NewServerV2(config ServerConfig) *ServerV2 {
 		config:               config,
 		host:                 NewAnalysisHost(capacity),
 		debouncer:            debouncer,
-		cancels:              make(map[DocumentURI]context.CancelFunc),
+		cancels:              make(map[DocumentURI]cancelEntry),
 		memberResolvers:      make(map[DocumentURI]map[string]sema.MemberResolver),
 		ranges:               make(map[DocumentURI]map[string]sema.Range),
 		codeActionsResolvers: make(map[DocumentURI]map[string]CodeActionResolver),
@@ -130,8 +139,8 @@ func (s *ServerV2) DidChangeTextDocument(conn protocol.Conn, params *protocol.Di
 func (s *ServerV2) scheduleCheck(uri DocumentURI) {
 	// Cancel any previous in-flight analysis for this URI.
 	s.cancelsMu.Lock()
-	if cancel, ok := s.cancels[uri]; ok {
-		cancel()
+	if entry, ok := s.cancels[uri]; ok {
+		entry.cancel()
 	}
 	s.cancelsMu.Unlock()
 
@@ -148,16 +157,16 @@ func (s *ServerV2) scheduleCheck(uri DocumentURI) {
 // runCheck performs analysis on the given URI and publishes diagnostics.
 func (s *ServerV2) runCheck(uri DocumentURI) {
 	ctx, cancel := context.WithCancel(context.Background())
+	token := s.nextToken.Add(1)
 
 	s.cancelsMu.Lock()
-	s.cancels[uri] = cancel
+	s.cancels[uri] = cancelEntry{cancel: cancel, token: token}
 	s.cancelsMu.Unlock()
 
 	defer func() {
 		cancel()
 		s.cancelsMu.Lock()
-		// Only remove if it's still our cancel func.
-		if c, ok := s.cancels[uri]; ok && funcEqual(c, cancel) {
+		if entry, ok := s.cancels[uri]; ok && entry.token == token {
 			delete(s.cancels, uri)
 		}
 		s.cancelsMu.Unlock()
@@ -171,15 +180,6 @@ func (s *ServerV2) runCheck(uri DocumentURI) {
 	}
 
 	s.publishDiagnostics(uri, result.Diagnostics)
-}
-
-// funcEqual compares two cancel functions by pointer identity.
-// We use a helper to work around the fact that Go funcs aren't directly comparable.
-func funcEqual(a, b context.CancelFunc) bool {
-	// We store cancel funcs that we create, so pointer comparison via interface is safe.
-	// This is a pragmatic approach; in practice the deferred cleanup path is
-	// only racy with a concurrent scheduleCheck for the same URI.
-	return &a == &b
 }
 
 // publishDiagnostics converts server2.Diagnostic slice to protocol.Diagnostic

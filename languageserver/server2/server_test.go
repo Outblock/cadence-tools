@@ -214,6 +214,22 @@ func TestDiagnosticLineConversion(t *testing.T) {
 	assert.Equal(t, "test error", pd.Message)
 }
 
+func TestCancelsMapCleanedUpAfterCheck(t *testing.T) {
+	srv := newTestServer()
+	conn := &mockConn{}
+	_, err := srv.Initialize(conn, &protocol.InitializeParams{})
+	require.NoError(t, err)
+
+	uri := protocol.DocumentURI("file:///cleanup.cdc")
+	openAndCheck(t, srv, conn, uri, "access(all) fun main() {}")
+
+	srv.cancelsMu.Lock()
+	count := len(srv.cancels)
+	srv.cancelsMu.Unlock()
+
+	assert.Equal(t, 0, count, "cancels map should be empty after check completes")
+}
+
 func TestShutdownStopsDebouncer(t *testing.T) {
 	srv := newTestServer()
 	conn := &mockConn{}
