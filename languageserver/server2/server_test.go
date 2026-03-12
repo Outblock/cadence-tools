@@ -230,6 +230,39 @@ func TestCancelsMapCleanedUpAfterCheck(t *testing.T) {
 	assert.Equal(t, 0, count, "cancels map should be empty after check completes")
 }
 
+func TestDidCloseRemovesDocument(t *testing.T) {
+	srv := newTestServer()
+	conn := &mockConn{}
+	_, err := srv.Initialize(conn, &protocol.InitializeParams{})
+	require.NoError(t, err)
+
+	uri := protocol.DocumentURI("file:///close.cdc")
+
+	err = srv.DidOpenTextDocument(conn, &protocol.DidOpenTextDocumentParams{
+		TextDocument: protocol.TextDocumentItem{
+			URI:        uri,
+			LanguageID: "cadence",
+			Version:    1,
+			Text:       "access(all) fun main() {}",
+		},
+	})
+	require.NoError(t, err)
+
+	_, ok := srv.getDocument(DocumentURI(uri))
+	require.True(t, ok, "document should exist after open")
+
+	err = srv.DidCloseTextDocument(conn, &protocol.DidCloseTextDocumentParams{
+		TextDocument: protocol.TextDocumentIdentifier{URI: uri},
+	})
+	require.NoError(t, err)
+
+	_, ok = srv.getDocument(DocumentURI(uri))
+	assert.False(t, ok, "document should be removed after close")
+
+	checker := srv.checkerForDocument(DocumentURI(uri))
+	assert.Nil(t, checker, "checker should be cleared after close")
+}
+
 func TestShutdownStopsDebouncer(t *testing.T) {
 	srv := newTestServer()
 	conn := &mockConn{}

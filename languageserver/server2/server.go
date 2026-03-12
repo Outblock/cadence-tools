@@ -135,6 +135,40 @@ func (s *ServerV2) DidChangeTextDocument(conn protocol.Conn, params *protocol.Di
 	return nil
 }
 
+// DidCloseTextDocument handles a document close notification.
+func (s *ServerV2) DidCloseTextDocument(_ protocol.Conn, params *protocol.DidCloseTextDocumentParams) error {
+	uri := DocumentURI(params.TextDocument.URI)
+
+	// Cancel any in-flight analysis for this URI.
+	s.cancelsMu.Lock()
+	if entry, ok := s.cancels[uri]; ok {
+		entry.cancel()
+		delete(s.cancels, uri)
+	}
+	s.cancelsMu.Unlock()
+
+	// Remove the document and invalidate cache.
+	s.host.RemoveDocument(uri)
+
+	// Clean up completion resolver state.
+	s.memberResolversMu.Lock()
+	delete(s.memberResolvers, uri)
+	s.memberResolversMu.Unlock()
+
+	s.rangesMu.Lock()
+	delete(s.ranges, uri)
+	s.rangesMu.Unlock()
+
+	s.codeActionsResolversMu.Lock()
+	delete(s.codeActionsResolvers, uri)
+	s.codeActionsResolversMu.Unlock()
+
+	// Publish empty diagnostics to clear any displayed diagnostics.
+	s.publishDiagnostics(uri, nil)
+
+	return nil
+}
+
 // scheduleCheck cancels any in-flight check for the URI and schedules a new one.
 func (s *ServerV2) scheduleCheck(uri DocumentURI) {
 	// Cancel any previous in-flight analysis for this URI.

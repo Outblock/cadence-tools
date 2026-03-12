@@ -776,6 +776,11 @@ func (s *Server) DidChangeTextDocument(
 	return nil
 }
 
+// DidCloseTextDocument is a no-op in the v1 server (satisfies protocol.Handler).
+func (s *Server) DidCloseTextDocument(_ protocol.Conn, _ *protocol.DidCloseTextDocumentParams) error {
+	return nil
+}
+
 type CadenceCheckCompletedParams struct {
 
 	/*URI defined:
