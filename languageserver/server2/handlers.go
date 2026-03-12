@@ -6,7 +6,6 @@ import (
 	"io"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/onflow/cadence/ast"
 	"github.com/onflow/cadence/common"
@@ -1166,5 +1165,3 @@ type CodeActionResolver = func() []*protocol.CodeAction
 
 // completionMaps holds the mutex-protected maps used for completion resolution.
 // These are stored as fields on ServerV2.
-
-var _ = sync.RWMutex{} // ensure sync is used
