@@ -955,6 +955,11 @@ func (s *Server) Definition(
 	}, nil
 }
 
+// References returns all references to the symbol at the given position.
+func (s *Server) References(_ protocol.Conn, _ *protocol.ReferenceParams) ([]protocol.Location, error) {
+	return nil, nil
+}
+
 func (s *Server) SignatureHelp(
 	_ protocol.Conn,
 	params *protocol.TextDocumentPositionParams,

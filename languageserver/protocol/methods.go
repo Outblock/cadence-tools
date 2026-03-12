@@ -77,6 +77,14 @@ func (s *Server) handleDefinition(req *json.RawMessage) (any, error) {
 	return s.Handler.Definition(s.conn, &params)
 }
 
+func (s *Server) handleReferences(req *json.RawMessage) (any, error) {
+	var params ReferenceParams
+	if err := json.Unmarshal(*req, &params); err != nil {
+		return nil, err
+	}
+	return s.Handler.References(s.conn, &params)
+}
+
 func (s *Server) handleSignatureHelp(req *json.RawMessage) (any, error) {
 	var params TextDocumentPositionParams
 	if err := json.Unmarshal(*req, &params); err != nil {

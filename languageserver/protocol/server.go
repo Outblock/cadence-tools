@@ -94,6 +94,7 @@ type Handler interface {
 	DidCloseTextDocument(conn Conn, params *DidCloseTextDocumentParams) error
 	Hover(conn Conn, params *TextDocumentPositionParams) (*Hover, error)
 	Definition(conn Conn, params *TextDocumentPositionParams) (*Location, error)
+	References(conn Conn, params *ReferenceParams) ([]Location, error)
 	SignatureHelp(conn Conn, params *TextDocumentPositionParams) (*SignatureHelp, error)
 	DocumentHighlight(conn Conn, params *TextDocumentPositionParams) ([]*DocumentHighlight, error)
 	Rename(conn Conn, params *RenameParams) (*WorkspaceEdit, error)
@@ -140,6 +141,9 @@ func NewServer(handler Handler) *Server {
 
 	jsonrpc2Server.Methods["textDocument/definition"] =
 		server.handleDefinition
+
+	jsonrpc2Server.Methods["textDocument/references"] =
+		server.handleReferences
 
 	jsonrpc2Server.Methods["textDocument/signatureHelp"] =
 		server.handleSignatureHelp

@@ -92,6 +92,7 @@ func (s *ServerV2) Initialize(conn protocol.Conn, params *protocol.InitializePar
 			},
 			HoverProvider:             &protocol.Or_ServerCapabilities_hoverProvider{Value: true},
 			DefinitionProvider:        &protocol.Or_ServerCapabilities_definitionProvider{Value: true},
+			ReferencesProvider:        &protocol.Or_ServerCapabilities_referencesProvider{Value: true},
 			SignatureHelpProvider:      &protocol.SignatureHelpOptions{},
 			DocumentHighlightProvider: &protocol.Or_ServerCapabilities_documentHighlightProvider{Value: true},
 			RenameProvider:            true,

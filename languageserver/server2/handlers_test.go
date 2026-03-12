@@ -379,6 +379,50 @@ func TestRenameVariable(t *testing.T) {
 	}
 }
 
+func TestReferencesReturnsAllOccurrences(t *testing.T) {
+	srv := newTestServer()
+	conn := &mockConn{}
+	_, err := srv.Initialize(conn, &protocol.InitializeParams{})
+	require.NoError(t, err)
+
+	uri := protocol.DocumentURI("file:///refs.cdc")
+	code := `access(all) fun main() {
+    let x = 42
+    let y = x
+    let z = x
+}`
+	openAndCheck(t, srv, conn, uri, code)
+
+	result, err := srv.References(conn, &protocol.ReferenceParams{
+		TextDocumentPositionParams: protocol.TextDocumentPositionParams{
+			TextDocument: protocol.TextDocumentIdentifier{URI: uri},
+			Position:     protocol.Position{Line: 2, Character: 12},
+		},
+		Context: protocol.ReferenceContext{IncludeDeclaration: true},
+	})
+	require.NoError(t, err)
+
+	// Should find: declaration of x, usage in "let y = x", usage in "let z = x"
+	assert.GreaterOrEqual(t, len(result), 2, "should find at least the declaration and usages of x")
+}
+
+func TestReferencesReturnsNilForNoChecker(t *testing.T) {
+	srv := newTestServer()
+	conn := &mockConn{}
+	_, err := srv.Initialize(conn, &protocol.InitializeParams{})
+	require.NoError(t, err)
+
+	result, err := srv.References(conn, &protocol.ReferenceParams{
+		TextDocumentPositionParams: protocol.TextDocumentPositionParams{
+			TextDocument: protocol.TextDocumentIdentifier{URI: "file:///noexist.cdc"},
+			Position:     protocol.Position{Line: 0, Character: 0},
+		},
+		Context: protocol.ReferenceContext{},
+	})
+	require.NoError(t, err)
+	assert.Nil(t, result)
+}
+
 func TestGetDocument(t *testing.T) {
 	host := NewAnalysisHost(64)
 

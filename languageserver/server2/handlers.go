@@ -169,6 +169,56 @@ func (s *ServerV2) Definition(
 	}, nil
 }
 
+// --- References ---
+
+func (s *ServerV2) References(
+	_ protocol.Conn,
+	params *protocol.ReferenceParams,
+) ([]protocol.Location, error) {
+	uri := DocumentURI(params.TextDocument.URI)
+	checker := s.checkerForDocument(uri)
+	if checker == nil {
+		return nil, nil
+	}
+
+	position := conversion.ProtocolToSemaPosition(params.Position)
+	occurrence := checker.PositionInfo.Occurrences.Find(position)
+	if occurrence == nil && position.Column > 0 {
+		previousPosition := position
+		previousPosition.Column -= 1
+		occurrence = checker.PositionInfo.Occurrences.Find(previousPosition)
+	}
+
+	if occurrence == nil {
+		return nil, nil
+	}
+
+	origin := occurrence.Origin
+	if origin == nil {
+		return nil, nil
+	}
+
+	var locations []protocol.Location
+
+	// Include the declaration itself if requested
+	if params.Context.IncludeDeclaration && origin.StartPos != nil && origin.EndPos != nil {
+		locations = append(locations, protocol.Location{
+			URI:   protocol.DocumentURI(uri),
+			Range: conversion.ASTToProtocolRange(*origin.StartPos, *origin.EndPos),
+		})
+	}
+
+	// Include all usage occurrences
+	for _, occRange := range origin.Occurrences {
+		locations = append(locations, protocol.Location{
+			URI:   protocol.DocumentURI(uri),
+			Range: conversion.ASTToProtocolRange(occRange.StartPos, occRange.EndPos),
+		})
+	}
+
+	return locations, nil
+}
+
 // --- SignatureHelp ---
 
 func (s *ServerV2) SignatureHelp(
