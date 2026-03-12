@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -13,9 +14,11 @@ import (
 
 	"github.com/onflow/cadence-tools/languageserver/conversion"
 	"github.com/onflow/cadence-tools/languageserver/protocol"
-
-	linter "github.com/onflow/cadence-tools/lint"
 )
+
+// docStringDeprecationPattern matches "deprecated" in doc strings.
+// Inlined from lint package to avoid pulling in flow-go-sdk/gRPC dependencies.
+var docStringDeprecationPattern = regexp.MustCompile(`(?i)[\t *_]*deprecated\b`)
 
 // CompletionItemData is the data attached to a CompletionItem so
 // ResolveCompletionItem can look up the member resolver or range.
@@ -904,7 +907,7 @@ func (s *ServerV2) prepareFunctionMemberCompletionItem(
 		return
 	}
 
-	if linter.MemberIsDeprecated(member.DocString) {
+	if docStringDeprecationPattern.MatchString(member.DocString) {
 		item.Tags = append(item.Tags, protocol.ComplDeprecated)
 	}
 

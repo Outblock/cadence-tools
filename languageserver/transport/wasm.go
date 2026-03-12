@@ -26,8 +26,8 @@ import (
 	"fmt"
 	"syscall/js"
 
+	"github.com/onflow/cadence-tools/languageserver/jsonrpc2"
 	"github.com/onflow/cadence-tools/languageserver/protocol"
-	"github.com/onflow/cadence-tools/languageserver/server"
 )
 
 // RunWASM starts the LSP v2 server in WASM mode.
@@ -74,7 +74,7 @@ func RunWASM(handler protocol.Handler) <-chan struct{} {
 
 	fmt.Println("Cadence LSP v2 WASM transport ready")
 
-	stream := server.NewObjectStream(
+	stream := jsonrpc2.NewFuncObjectStream(
 		// writeObject: Go -> JS
 		func(obj any) error {
 			data, err := json.Marshal(obj)

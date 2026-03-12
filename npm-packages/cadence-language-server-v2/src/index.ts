@@ -17,7 +17,7 @@
  */
 
 /**
- * Options for creating a CadenceLanguageServerV2 instance.
+ * Options for creating a CadenceLanguageServer instance.
  */
 export interface CadenceLanguageServerOptions {
   /**
@@ -27,22 +27,28 @@ export interface CadenceLanguageServerOptions {
   wasmUrl: string;
 
   /**
-   * URL to the Web Worker script (`worker.js` — the compiled output
-   * of `src/worker.ts`). If omitted, the caller must provide a
-   * pre-constructed Worker via the `worker` option instead.
+   * URL to the Web Worker script (`worker.js`).
+   * If omitted, the caller must provide a pre-constructed Worker
+   * via the `worker` option instead.
    */
   workerUrl?: string;
 
   /**
    * A pre-constructed Web Worker. When provided, `workerUrl` is ignored.
-   * This is useful when the host bundles the worker via a tool like
-   * Vite (`new Worker(new URL('./worker.ts', import.meta.url))`).
+   * This is useful when the host bundles the worker via Vite:
+   * `new Worker(new URL('./worker', import.meta.url))`
    */
   worker?: Worker;
 
   /**
+   * Flow REST API access node URL.
+   * Defaults to mainnet: "https://rest-mainnet.onflow.org"
+   */
+  accessNode?: string;
+
+  /**
    * Called when the LSP sends a JSON-RPC message to the client.
-   * The `message` is a plain JSON string (no Content-Length framing).
+   * The `message` is a plain JSON string.
    */
   onMessage?: (message: string) => void;
 
@@ -52,37 +58,34 @@ export interface CadenceLanguageServerOptions {
   onError?: (error: string) => void;
 
   /**
-   * Called when the WASM LSP has finished initialization and is
-   * ready to receive JSON-RPC messages.
+   * Called when the WASM LSP is ready to receive messages.
    */
   onReady?: () => void;
 }
 
 /**
- * CadenceLanguageServerV2 manages a Cadence LSP instance running
+ * CadenceLanguageServer manages a Cadence LSP v2 instance running
  * inside a Web Worker + WASM binary.
  *
- * Communication uses `postMessage` rather than global function tables,
- * making it safe for multiple instances and compatible with modern
- * CSP policies.
+ * Address imports (e.g. `import X from 0xADDR`) are resolved inside the
+ * Worker via synchronous XHR to the Flow REST API, so the main thread
+ * stays unblocked.
  *
  * Usage:
  * ```ts
- * const lsp = await CadenceLanguageServerV2.create({
- *   wasmUrl: '/cadence-language-server.wasm',
- *   workerUrl: '/cadence-lsp-worker.js',
- *   onMessage(msg) { // forward to your LSP client transport },
- *   onReady() { console.log('LSP ready'); },
+ * import { CadenceLanguageServer } from "@outblock/cadence-language-server";
+ *
+ * const lsp = await CadenceLanguageServer.create({
+ *   wasmUrl: "/cadence-language-server.wasm",
+ *   workerUrl: "/cadence-lsp-worker.js",
+ *   onMessage(msg) { console.log("from server:", msg); },
  * });
  *
- * // Send JSON-RPC messages from the client to the server:
  * lsp.sendToServer(jsonRpcMessage);
- *
- * // When done:
  * lsp.dispose();
  * ```
  */
-export class CadenceLanguageServerV2 {
+export class CadenceLanguageServer {
   private worker: Worker;
   private disposed = false;
 
@@ -91,20 +94,21 @@ export class CadenceLanguageServerV2 {
   }
 
   /**
-   * Create and initialize a new CadenceLanguageServerV2 instance.
+   * Create and initialize a new CadenceLanguageServer instance.
    * Resolves once the WASM binary is loaded and the LSP is ready.
    */
-  static create(options: CadenceLanguageServerOptions): Promise<CadenceLanguageServerV2> {
+  static create(options: CadenceLanguageServerOptions): Promise<CadenceLanguageServer> {
     const worker = options.worker ?? new Worker(options.workerUrl!, { type: "classic" });
-    const instance = new CadenceLanguageServerV2(worker);
+    const instance = new CadenceLanguageServer(worker);
 
-    return new Promise<CadenceLanguageServerV2>((resolve, reject) => {
+    return new Promise<CadenceLanguageServer>((resolve, reject) => {
       const onMessage = (event: MessageEvent) => {
         const data = event.data;
         if (!data || typeof data !== "object") return;
 
         switch (data.type) {
           case "ready":
+            options.onReady?.();
             resolve(instance);
             break;
           case "fromServer":
@@ -112,7 +116,6 @@ export class CadenceLanguageServerV2 {
             break;
           case "error":
             options.onError?.(data.error);
-            // If we haven't resolved yet, this is a startup error.
             reject(new Error(data.error));
             break;
         }
@@ -127,8 +130,11 @@ export class CadenceLanguageServerV2 {
       worker.addEventListener("message", onMessage);
       worker.addEventListener("error", onError);
 
-      // Tell the worker to initialize.
-      worker.postMessage({ type: "init", wasmUrl: options.wasmUrl });
+      worker.postMessage({
+        type: "init",
+        wasmUrl: options.wasmUrl,
+        accessNode: options.accessNode,
+      });
     });
   }
 
@@ -137,9 +143,40 @@ export class CadenceLanguageServerV2 {
    */
   sendToServer(message: string): void {
     if (this.disposed) {
-      throw new Error("CadenceLanguageServerV2 has been disposed");
+      throw new Error("CadenceLanguageServer has been disposed");
     }
     this.worker.postMessage({ type: "toServer", message });
+  }
+
+  /**
+   * Update the Flow REST API access node URL.
+   */
+  setAccessNode(accessNode: string): void {
+    this.worker.postMessage({ type: "setConfig", accessNode });
+  }
+
+  /**
+   * Push local file content for string import resolution.
+   * Call this for each local .cdc file so the LSP can resolve
+   * `import "MyContract"` style imports.
+   */
+  setStringCode(location: string, code: string): void {
+    this.worker.postMessage({ type: "setStringCode", location, code });
+  }
+
+  /**
+   * Clear all string code mappings.
+   */
+  clearStringCode(): void {
+    this.worker.postMessage({ type: "clearStringCode" });
+  }
+
+  /**
+   * Pre-populate the address code cache so the worker doesn't
+   * need to fetch from the REST API.
+   */
+  preloadAddressCode(address: string, contractName: string, code: string): void {
+    this.worker.postMessage({ type: "preloadAddressCode", address, contractName, code });
   }
 
   /**

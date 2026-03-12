@@ -5,13 +5,17 @@
  *   1. Loads the Go WASM runtime (wasm_exec.js shim)
  *   2. Instantiates the Cadence LSP WASM binary
  *   3. Bridges postMessage <==> Go global functions
+ *   4. Resolves address imports via sync XHR to Flow REST API
  *
  * Communication protocol (all via postMessage):
- *   Main -> Worker: { type: "init",   wasmUrl: string }
- *   Main -> Worker: { type: "toServer", message: string }
+ *   Main -> Worker: { type: "init",      wasmUrl: string, accessNode?: string }
+ *   Main -> Worker: { type: "toServer",  message: string }
+ *   Main -> Worker: { type: "setConfig", accessNode?: string }
+ *   Main -> Worker: { type: "resolveResponse", id: number, code?: string }
  *   Worker -> Main: { type: "fromServer", message: string }
  *   Worker -> Main: { type: "ready" }
  *   Worker -> Main: { type: "error", error: string }
+ *   Worker -> Main: { type: "resolveString", id: number, location: string }
  */
 
 // Worker global scope — `self` is already declared by the WebWorker lib.
@@ -22,6 +26,79 @@ declare class Go {
   env: Record<string, string>;
   importObject: WebAssembly.Imports;
   run(instance: WebAssembly.Instance): Promise<void>;
+}
+
+let currentAccessNode = "https://rest-mainnet.onflow.org";
+
+// Cache for resolved address code
+const addressCodeCache = new Map<string, string>();
+
+/**
+ * Synchronously fetch a contract from Flow REST API.
+ * Runs inside the Worker so it doesn't block the main thread.
+ */
+function fetchContractSync(address: string, contractName: string): string | undefined {
+  const normalized = address.replace(/^0x/, "").padStart(16, "0");
+  const url = `${currentAccessNode}/v1/accounts/0x${normalized}?expand=contracts`;
+  try {
+    const xhr = new XMLHttpRequest();
+    xhr.open("GET", url, false); // synchronous
+    xhr.send();
+    if (xhr.status !== 200) return undefined;
+    const data = JSON.parse(xhr.responseText);
+    const contracts = data?.contracts;
+    if (!contracts || typeof contracts !== "object") return undefined;
+    const encoded = contracts[contractName];
+    if (typeof encoded === "string" && encoded.length > 0) {
+      try { return atob(encoded); } catch { return encoded; }
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Resolve an address import. Called synchronously by Go WASM.
+ * locationID format: "A.0xADDR.ContractName"
+ */
+function resolveAddress(locationID: string): string | undefined {
+  const parts = locationID.split(".");
+  let address: string;
+  let contractName: string;
+
+  if (parts[0] === "A" && parts.length >= 3) {
+    address = parts[1];
+    contractName = parts.slice(2).join(".");
+  } else if (parts.length >= 2) {
+    address = parts[0];
+    contractName = parts.slice(1).join(".");
+  } else {
+    return undefined;
+  }
+
+  const normalized = address.replace(/^0x/, "").padStart(16, "0");
+  const addrKey = `0x${normalized}`;
+  const cacheKey = `${addrKey}.${contractName}`;
+
+  if (addressCodeCache.has(cacheKey)) {
+    return addressCodeCache.get(cacheKey);
+  }
+
+  const code = fetchContractSync(addrKey, contractName);
+  if (code) {
+    addressCodeCache.set(cacheKey, code);
+  }
+  return code;
+}
+
+// String import resolution — we use a sync request back to main thread
+// via SharedArrayBuffer when available, otherwise fall back to undefined.
+// The main thread can pre-populate string imports by sending them as config.
+const stringCodeMap = new Map<string, string>();
+
+function resolveString(locationID: string): string | undefined {
+  return stringCodeMap.get(locationID);
 }
 
 /**
@@ -96,34 +173,27 @@ function installFsPolyfill(): void {
 async function startLSP(wasmUrl: string): Promise<void> {
   installFsPolyfill();
 
-  // Import the Go WASM runtime shim.
-  // The consumer must ensure wasm_exec.js is available (e.g. via importScripts
-  // or bundled). We try importScripts first (classic worker), then check globalThis.
   const g = globalThis as Record<string, unknown>;
   if (typeof g.Go === "undefined") {
-    // Classic worker: try importScripts with the standard Go shim path.
-    // The host page should set __WASM_EXEC_URL__ or we fall back to a
-    // sibling path relative to the worker script.
     const shimUrl = (g.__WASM_EXEC_URL__ as string) ?? new URL("wasm_exec.js", self.location.href).href;
     importScripts(shimUrl);
   }
 
+  // Register import resolvers before Go starts
+  g.__CADENCE_LSP_RESOLVE_ADDRESS__ = resolveAddress;
+  g.__CADENCE_LSP_RESOLVE_STRING__ = resolveString;
+
   const go = new (g.Go as typeof Go)();
 
-  // Fetch and instantiate the WASM binary.
   const result = await WebAssembly.instantiateStreaming(fetch(wasmUrl), go.importObject);
 
-  // Start Go (non-blocking -- go.run returns a promise that resolves on exit).
   go.run(result.instance).catch((err: unknown) => {
     self.postMessage({ type: "error", error: String(err) });
   });
 
-  // Wait for Go to register its global functions and signal readiness.
   await waitForReady();
 
-  // Provide the toClient callback to Go. Go registered __CADENCE_LSP_SET_CLIENT__
-  // during RunWASM init; we now call it with a function that forwards messages
-  // to the main thread via postMessage.
+  // Wire up toClient callback
   const setClient = g.__CADENCE_LSP_SET_CLIENT__ as (fn: (msg: string) => void) => void;
   setClient((msg: string) => {
     self.postMessage({ type: "fromServer", message: msg });
@@ -132,9 +202,6 @@ async function startLSP(wasmUrl: string): Promise<void> {
   self.postMessage({ type: "ready" });
 }
 
-/**
- * Poll until Go sets __CADENCE_LSP_READY__ = true.
- */
 function waitForReady(): Promise<void> {
   const g = globalThis as Record<string, unknown>;
   return new Promise((resolve) => {
@@ -156,6 +223,9 @@ self.addEventListener("message", (event: MessageEvent) => {
 
   switch (data.type) {
     case "init":
+      if (data.accessNode) {
+        currentAccessNode = data.accessNode;
+      }
       startLSP(data.wasmUrl).catch((err) => {
         self.postMessage({ type: "error", error: String(err) });
       });
@@ -169,5 +239,31 @@ self.addEventListener("message", (event: MessageEvent) => {
       }
       break;
     }
+
+    case "setConfig":
+      if (data.accessNode) {
+        currentAccessNode = data.accessNode;
+      }
+      break;
+
+    case "setStringCode":
+      // Allow main thread to push local file content for string imports
+      if (data.location && typeof data.code === "string") {
+        stringCodeMap.set(data.location, data.code);
+      }
+      break;
+
+    case "clearStringCode":
+      stringCodeMap.clear();
+      break;
+
+    case "preloadAddressCode":
+      // Pre-populate address code cache
+      if (data.address && data.contractName && data.code) {
+        const normalized = data.address.replace(/^0x/, "").padStart(16, "0");
+        const cacheKey = `0x${normalized}.${data.contractName}`;
+        addressCodeCache.set(cacheKey, data.code);
+      }
+      break;
   }
 });

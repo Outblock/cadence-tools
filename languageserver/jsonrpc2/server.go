@@ -90,6 +90,30 @@ func NewServer() *Server {
 
 type ObjectStream = jsonrpc2.ObjectStream
 
+// FuncObjectStream is an ObjectStream backed by plain functions.
+type FuncObjectStream struct {
+	writeObject func(obj any) error
+	readObject  func(v any) error
+	close       func() error
+}
+
+// NewFuncObjectStream creates an ObjectStream from functions.
+func NewFuncObjectStream(
+	writeObject func(obj any) error,
+	readObject func(v any) error,
+	close func() error,
+) FuncObjectStream {
+	return FuncObjectStream{
+		writeObject: writeObject,
+		readObject:  readObject,
+		close:       close,
+	}
+}
+
+func (o FuncObjectStream) WriteObject(obj any) error { return o.writeObject(obj) }
+func (o FuncObjectStream) ReadObject(v any) error     { return o.readObject(v) }
+func (o FuncObjectStream) Close() error               { return o.close() }
+
 func (server *Server) Start(stream ObjectStream) <-chan struct{} {
 	server.conn = jsonrpc2.NewConn(context.Background(), stream, &handler{server})
 	return server.conn.DisconnectNotify()
