@@ -107,6 +107,7 @@ type Handler interface {
 	DocumentSymbol(conn Conn, params *DocumentSymbolParams) ([]*DocumentSymbol, error)
 	DocumentLink(conn Conn, params *DocumentLinkParams) ([]*DocumentLink, error)
 	InlayHint(conn Conn, params *InlayHintParams) ([]*InlayHint, error)
+	FoldingRange(conn Conn, params *FoldingRangeParams) ([]*FoldingRange, error)
 	Shutdown(conn Conn) error
 	Exit(conn Conn) error
 }
@@ -180,6 +181,9 @@ func NewServer(handler Handler) *Server {
 
 	jsonrpc2Server.Methods["textDocument/inlayHint"] =
 		server.handleInlayHint
+
+	jsonrpc2Server.Methods["textDocument/foldingRange"] =
+		server.handleFoldingRange
 
 	jsonrpc2Server.Methods["shutdown"] =
 		server.handleShutdown

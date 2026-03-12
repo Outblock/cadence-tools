@@ -2235,6 +2235,10 @@ func (s *Server) InlayHint(
 	return
 }
 
+func (s *Server) FoldingRange(conn protocol.Conn, params *protocol.FoldingRangeParams) ([]*protocol.FoldingRange, error) {
+	return nil, nil
+}
+
 // Shutdown tells the server to stop accepting any new requests. This can only
 // be followed by a call to Exit, which exits the process.
 func (*Server) Shutdown(conn protocol.Conn) error {

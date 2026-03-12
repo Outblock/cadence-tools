@@ -1125,6 +1125,77 @@ func (s *ServerV2) InlayHint(
 	return inlayHints, nil
 }
 
+// --- FoldingRange ---
+
+func (s *ServerV2) FoldingRange(
+	_ protocol.Conn,
+	params *protocol.FoldingRangeParams,
+) ([]*protocol.FoldingRange, error) {
+	ranges := []*protocol.FoldingRange{}
+
+	uri := DocumentURI(params.TextDocument.URI)
+	checker := s.checkerForDocument(uri)
+	if checker == nil {
+		return ranges, nil
+	}
+
+	ast.Inspect(checker.Program, func(element ast.Element) bool {
+		var startLine, endLine int
+		kind := "region"
+
+		switch e := element.(type) {
+		case *ast.FunctionDeclaration:
+			if e.FunctionBlock == nil {
+				return true
+			}
+			startLine = e.StartPosition().Line
+			endLine = e.EndPosition(nil).Line
+		case *ast.SpecialFunctionDeclaration:
+			fd := e.FunctionDeclaration
+			if fd.FunctionBlock == nil {
+				return true
+			}
+			startLine = fd.StartPosition().Line
+			endLine = fd.EndPosition(nil).Line
+		case *ast.CompositeDeclaration:
+			startLine = e.StartPosition().Line
+			endLine = e.EndPosition(nil).Line
+		case *ast.InterfaceDeclaration:
+			startLine = e.StartPosition().Line
+			endLine = e.EndPosition(nil).Line
+		case *ast.TransactionDeclaration:
+			startLine = e.StartPosition().Line
+			endLine = e.EndPosition(nil).Line
+		case *ast.SwitchStatement:
+			startLine = e.StartPosition().Line
+			endLine = e.EndPosition(nil).Line
+		case *ast.ForStatement:
+			startLine = e.StartPosition().Line
+			endLine = e.EndPosition(nil).Line
+		case *ast.WhileStatement:
+			startLine = e.StartPosition().Line
+			endLine = e.EndPosition(nil).Line
+		case *ast.IfStatement:
+			startLine = e.StartPosition().Line
+			endLine = e.EndPosition(nil).Line
+		default:
+			return true
+		}
+
+		// Only fold multi-line blocks
+		if endLine > startLine {
+			ranges = append(ranges, &protocol.FoldingRange{
+				StartLine: uint32(startLine - 1), // Convert to 0-based
+				EndLine:   uint32(endLine - 1),
+				Kind:      kind,
+			})
+		}
+		return true
+	})
+
+	return ranges, nil
+}
+
 // --- ExecuteCommand ---
 
 func (s *ServerV2) ExecuteCommand(

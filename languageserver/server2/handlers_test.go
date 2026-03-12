@@ -423,6 +423,44 @@ func TestReferencesReturnsNilForNoChecker(t *testing.T) {
 	assert.Nil(t, result)
 }
 
+func TestFoldingRangeReturnsFoldableRegions(t *testing.T) {
+	srv := newTestServer()
+	conn := &mockConn{}
+	_, err := srv.Initialize(conn, &protocol.InitializeParams{})
+	require.NoError(t, err)
+
+	uri := protocol.DocumentURI("file:///fold.cdc")
+	code := `access(all) contract Foo {
+    access(all) fun bar(): Int {
+        return 42
+    }
+    access(all) fun baz(): Int {
+        return 1
+    }
+}`
+	openAndCheck(t, srv, conn, uri, code)
+
+	result, err := srv.FoldingRange(conn, &protocol.FoldingRangeParams{
+		TextDocument: protocol.TextDocumentIdentifier{URI: uri},
+	})
+	require.NoError(t, err)
+	// Should have: contract body + 2 function bodies = at least 3 folding ranges
+	assert.GreaterOrEqual(t, len(result), 3, "should have folding ranges for contract and functions")
+}
+
+func TestFoldingRangeReturnsEmptyForNoChecker(t *testing.T) {
+	srv := newTestServer()
+	conn := &mockConn{}
+	_, err := srv.Initialize(conn, &protocol.InitializeParams{})
+	require.NoError(t, err)
+
+	result, err := srv.FoldingRange(conn, &protocol.FoldingRangeParams{
+		TextDocument: protocol.TextDocumentIdentifier{URI: "file:///noexist.cdc"},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, result)
+}
+
 func TestGetDocument(t *testing.T) {
 	host := NewAnalysisHost(64)
 
