@@ -91,8 +91,10 @@ type Handler interface {
 	Initialize(conn Conn, params *InitializeParams) (*InitializeResult, error)
 	DidOpenTextDocument(conn Conn, params *DidOpenTextDocumentParams) error
 	DidChangeTextDocument(conn Conn, params *DidChangeTextDocumentParams) error
+	DidCloseTextDocument(conn Conn, params *DidCloseTextDocumentParams) error
 	Hover(conn Conn, params *TextDocumentPositionParams) (*Hover, error)
 	Definition(conn Conn, params *TextDocumentPositionParams) (*Location, error)
+	References(conn Conn, params *ReferenceParams) ([]Location, error)
 	SignatureHelp(conn Conn, params *TextDocumentPositionParams) (*SignatureHelp, error)
 	DocumentHighlight(conn Conn, params *TextDocumentPositionParams) ([]*DocumentHighlight, error)
 	Rename(conn Conn, params *RenameParams) (*WorkspaceEdit, error)
@@ -105,6 +107,10 @@ type Handler interface {
 	DocumentSymbol(conn Conn, params *DocumentSymbolParams) ([]*DocumentSymbol, error)
 	DocumentLink(conn Conn, params *DocumentLinkParams) ([]*DocumentLink, error)
 	InlayHint(conn Conn, params *InlayHintParams) ([]*InlayHint, error)
+	FoldingRange(conn Conn, params *FoldingRangeParams) ([]*FoldingRange, error)
+	SelectionRange(conn Conn, params *SelectionRangeParams) ([]*SelectionRange, error)
+	WorkspaceSymbol(conn Conn, params *WorkspaceSymbolParams) ([]SymbolInformation, error)
+	SemanticTokensFull(conn Conn, params *SemanticTokensParams) (*SemanticTokens, error)
 	Shutdown(conn Conn) error
 	Exit(conn Conn) error
 }
@@ -131,11 +137,17 @@ func NewServer(handler Handler) *Server {
 	jsonrpc2Server.Methods["textDocument/didChange"] =
 		server.handleDidChangeTextDocument
 
+	jsonrpc2Server.Methods["textDocument/didClose"] =
+		server.handleDidCloseTextDocument
+
 	jsonrpc2Server.Methods["textDocument/hover"] =
 		server.handleHover
 
 	jsonrpc2Server.Methods["textDocument/definition"] =
 		server.handleDefinition
+
+	jsonrpc2Server.Methods["textDocument/references"] =
+		server.handleReferences
 
 	jsonrpc2Server.Methods["textDocument/signatureHelp"] =
 		server.handleSignatureHelp
@@ -172,6 +184,18 @@ func NewServer(handler Handler) *Server {
 
 	jsonrpc2Server.Methods["textDocument/inlayHint"] =
 		server.handleInlayHint
+
+	jsonrpc2Server.Methods["textDocument/foldingRange"] =
+		server.handleFoldingRange
+
+	jsonrpc2Server.Methods["textDocument/selectionRange"] =
+		server.handleSelectionRange
+
+	jsonrpc2Server.Methods["workspace/symbol"] =
+		server.handleWorkspaceSymbol
+
+	jsonrpc2Server.Methods["textDocument/semanticTokens/full"] =
+		server.handleSemanticTokensFull
 
 	jsonrpc2Server.Methods["shutdown"] =
 		server.handleShutdown

@@ -1,0 +1,68 @@
+name: Publish LS v2 NPM Package
+
+on:
+  push:
+    tags:
+      - 'languageserver-v2/v*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-go@v3
+        with:
+          go-version: '1.25'
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24.x'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: "Update package.json version"
+        run: |
+          tag_name=${GITHUB_REF#refs/tags/}
+          release_version=$(echo "$tag_name" | awk -F"/v" '{print $2}')
+
+          jq '.version = $version' --arg version "$release_version" \
+            ./npm-packages/cadence-language-server-v2/package.json > tmp_package.json && \
+            mv tmp_package.json ./npm-packages/cadence-language-server-v2/package.json
+
+          cat ./npm-packages/cadence-language-server-v2/package.json
+
+          release_branch="ls-v2/npm-publish-$release_version"
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+
+          git add ./npm-packages/cadence-language-server-v2/package.json
+          git commit -m "Update @outblock/cadence-language-server to $release_version"
+
+          git branch "$release_branch"
+          git checkout "$release_branch"
+          git push origin "$release_branch"
+
+          gh pr create \
+            --title "[LS-v2] Update and publish NPM package $release_version" \
+            --body "Updating @outblock/cadence-language-server to $release_version and publishing to NPM" \
+            --base master \
+            --head "$release_branch"
+
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: "Install wasm-opt (binaryen)"
+        run: sudo apt-get update && sudo apt-get install -y binaryen
+
+      - name: "Build NPM package"
+        run: |
+          cd npm-packages/cadence-language-server-v2
+          npm install
+          npm run build
+
+      - name: "Publish NPM package"
+        run: |
+          cd npm-packages/cadence-language-server-v2
+          npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

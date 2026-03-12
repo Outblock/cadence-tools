@@ -776,6 +776,11 @@ func (s *Server) DidChangeTextDocument(
 	return nil
 }
 
+// DidCloseTextDocument is a no-op in the v1 server (satisfies protocol.Handler).
+func (s *Server) DidCloseTextDocument(_ protocol.Conn, _ *protocol.DidCloseTextDocumentParams) error {
+	return nil
+}
+
 type CadenceCheckCompletedParams struct {
 
 	/*URI defined:
@@ -948,6 +953,11 @@ func (s *Server) Definition(
 			*origin.EndPos,
 		),
 	}, nil
+}
+
+// References returns all references to the symbol at the given position.
+func (s *Server) References(_ protocol.Conn, _ *protocol.ReferenceParams) ([]protocol.Location, error) {
+	return nil, nil
 }
 
 func (s *Server) SignatureHelp(
@@ -2223,6 +2233,22 @@ func (s *Server) InlayHint(
 	}
 
 	return
+}
+
+func (s *Server) FoldingRange(conn protocol.Conn, params *protocol.FoldingRangeParams) ([]*protocol.FoldingRange, error) {
+	return nil, nil
+}
+
+func (s *Server) SelectionRange(conn protocol.Conn, params *protocol.SelectionRangeParams) ([]*protocol.SelectionRange, error) {
+	return nil, nil
+}
+
+func (s *Server) WorkspaceSymbol(conn protocol.Conn, params *protocol.WorkspaceSymbolParams) ([]protocol.SymbolInformation, error) {
+	return nil, nil
+}
+
+func (s *Server) SemanticTokensFull(conn protocol.Conn, params *protocol.SemanticTokensParams) (*protocol.SemanticTokens, error) {
+	return nil, nil
 }
 
 // Shutdown tells the server to stop accepting any new requests. This can only

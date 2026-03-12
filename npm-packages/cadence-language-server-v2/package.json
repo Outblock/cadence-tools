@@ -1,0 +1,27 @@
+{
+  "name": "@outblock/cadence-language-server",
+  "version": "2.0.0",
+  "description": "Cadence Language Server v2 — WASM + Web Worker bridge",
+  "homepage": "https://github.com/Outblock/cadence-tools",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Outblock/cadence-tools.git"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist/**/*"
+  ],
+  "scripts": {
+    "build:wasm": "cd ../../languageserver && GOARCH=wasm GOOS=js go build -tags no_cgo -ldflags='-s -w' -o ../npm-packages/cadence-language-server-v2/dist/cadence-language-server.wasm ./cmd/lsp-v2/",
+    "build:wasm-opt": "wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals dist/cadence-language-server.wasm -o dist/cadence-language-server.wasm || true",
+    "build:runtime": "cp $(go env GOROOT)/lib/wasm/wasm_exec.js dist/wasm_exec.js",
+    "build:ts": "tsc",
+    "build": "npm run build:ts && npm run build:wasm && npm run build:wasm-opt && npm run build:runtime",
+    "prepublishOnly": "npm run build"
+  },
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "typescript": "^5.2.2"
+  }
+}

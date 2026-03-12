@@ -49,6 +49,16 @@ func (s *Server) handleDidChangeTextDocument(req *json.RawMessage) (any, error) 
 	return nil, err
 }
 
+func (s *Server) handleDidCloseTextDocument(req *json.RawMessage) (any, error) {
+	var params DidCloseTextDocumentParams
+	if err := json.Unmarshal(*req, &params); err != nil {
+		return nil, err
+	}
+
+	err := s.Handler.DidCloseTextDocument(s.conn, &params)
+	return nil, err
+}
+
 func (s *Server) handleHover(req *json.RawMessage) (any, error) {
 	var params TextDocumentPositionParams
 	if err := json.Unmarshal(*req, &params); err != nil {
@@ -65,6 +75,14 @@ func (s *Server) handleDefinition(req *json.RawMessage) (any, error) {
 	}
 
 	return s.Handler.Definition(s.conn, &params)
+}
+
+func (s *Server) handleReferences(req *json.RawMessage) (any, error) {
+	var params ReferenceParams
+	if err := json.Unmarshal(*req, &params); err != nil {
+		return nil, err
+	}
+	return s.Handler.References(s.conn, &params)
 }
 
 func (s *Server) handleSignatureHelp(req *json.RawMessage) (any, error) {
@@ -170,6 +188,38 @@ func (s *Server) handleInlayHint(req *json.RawMessage) (any, error) {
 		return nil, err
 	}
 	return s.Handler.InlayHint(s.conn, &params)
+}
+
+func (s *Server) handleFoldingRange(req *json.RawMessage) (any, error) {
+	var params FoldingRangeParams
+	if err := json.Unmarshal(*req, &params); err != nil {
+		return nil, err
+	}
+	return s.Handler.FoldingRange(s.conn, &params)
+}
+
+func (s *Server) handleSelectionRange(req *json.RawMessage) (any, error) {
+	var params SelectionRangeParams
+	if err := json.Unmarshal(*req, &params); err != nil {
+		return nil, err
+	}
+	return s.Handler.SelectionRange(s.conn, &params)
+}
+
+func (s *Server) handleWorkspaceSymbol(req *json.RawMessage) (any, error) {
+	var params WorkspaceSymbolParams
+	if err := json.Unmarshal(*req, &params); err != nil {
+		return nil, err
+	}
+	return s.Handler.WorkspaceSymbol(s.conn, &params)
+}
+
+func (s *Server) handleSemanticTokensFull(req *json.RawMessage) (any, error) {
+	var params SemanticTokensParams
+	if err := json.Unmarshal(*req, &params); err != nil {
+		return nil, err
+	}
+	return s.Handler.SemanticTokensFull(s.conn, &params)
 }
 
 func (s *Server) handleShutdown(_ *json.RawMessage) (any, error) {
