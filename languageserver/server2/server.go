@@ -19,6 +19,13 @@ type cancelEntry struct {
 	token  uint64
 }
 
+type completionSessionState struct {
+	memberResolvers map[string]sema.MemberResolver
+	ranges          map[string]sema.Range
+}
+
+const maxCompletionSessions = 128
+
 // ServerConfig holds configuration for the language server.
 type ServerConfig struct {
 	ImportResolver resolver.ImportResolver
@@ -41,11 +48,10 @@ type ServerV2 struct {
 	conn   protocol.Conn
 
 	// Completion resolution state (protected by mutexes)
-	memberResolversMu sync.RWMutex
-	memberResolvers   map[DocumentURI]map[string]sema.MemberResolver
-
-	rangesMu sync.RWMutex
-	ranges   map[DocumentURI]map[string]sema.Range
+	completionSessionsMu    sync.RWMutex
+	completionSessions      map[string]completionSessionState
+	completionSessionOrder  []string
+	nextCompletionSessionID atomic.Uint64
 
 	// Code action resolution state
 	codeActionsResolversMu sync.RWMutex
@@ -72,8 +78,7 @@ func NewServerV2(config ServerConfig) *ServerV2 {
 		host:                 NewAnalysisHost(capacity),
 		debouncer:            debouncer,
 		cancels:              make(map[DocumentURI]cancelEntry),
-		memberResolvers:      make(map[DocumentURI]map[string]sema.MemberResolver),
-		ranges:               make(map[DocumentURI]map[string]sema.Range),
+		completionSessions:   make(map[string]completionSessionState),
 		codeActionsResolvers: make(map[DocumentURI]map[string]CodeActionResolver),
 	}
 }
@@ -90,22 +95,27 @@ func (s *ServerV2) Initialize(conn protocol.Conn, params *protocol.InitializePar
 				OpenClose: true,
 				Change:    protocol.Full,
 			},
-			HoverProvider:             &protocol.Or_ServerCapabilities_hoverProvider{Value: true},
-			DefinitionProvider:        &protocol.Or_ServerCapabilities_definitionProvider{Value: true},
-			ReferencesProvider:        &protocol.Or_ServerCapabilities_referencesProvider{Value: true},
-			SignatureHelpProvider:      &protocol.SignatureHelpOptions{},
+			HoverProvider:      &protocol.Or_ServerCapabilities_hoverProvider{Value: true},
+			DefinitionProvider: &protocol.Or_ServerCapabilities_definitionProvider{Value: true},
+			ReferencesProvider: &protocol.Or_ServerCapabilities_referencesProvider{Value: true},
+			SignatureHelpProvider: &protocol.SignatureHelpOptions{
+				TriggerCharacters: []string{"("},
+			},
 			DocumentHighlightProvider: &protocol.Or_ServerCapabilities_documentHighlightProvider{Value: true},
 			RenameProvider:            true,
 			CodeActionProvider:        true,
 			CodeLensProvider:          &protocol.CodeLensOptions{},
-			CompletionProvider:        &protocol.CompletionOptions{ResolveProvider: true},
-			DocumentSymbolProvider:    &protocol.Or_ServerCapabilities_documentSymbolProvider{Value: true},
-			DocumentLinkProvider:      &protocol.DocumentLinkOptions{},
-			InlayHintProvider:         true,
-			FoldingRangeProvider:      &protocol.Or_ServerCapabilities_foldingRangeProvider{Value: true},
-			SelectionRangeProvider:    &protocol.Or_ServerCapabilities_selectionRangeProvider{Value: true},
-			WorkspaceSymbolProvider:   &protocol.Or_ServerCapabilities_workspaceSymbolProvider{Value: true},
-			ExecuteCommandProvider:    &protocol.ExecuteCommandOptions{},
+			CompletionProvider: &protocol.CompletionOptions{
+				TriggerCharacters: []string{"."},
+				ResolveProvider:   true,
+			},
+			DocumentSymbolProvider:  &protocol.Or_ServerCapabilities_documentSymbolProvider{Value: true},
+			DocumentLinkProvider:    &protocol.DocumentLinkOptions{},
+			InlayHintProvider:       true,
+			FoldingRangeProvider:    &protocol.Or_ServerCapabilities_foldingRangeProvider{Value: true},
+			SelectionRangeProvider:  &protocol.Or_ServerCapabilities_selectionRangeProvider{Value: true},
+			WorkspaceSymbolProvider: &protocol.Or_ServerCapabilities_workspaceSymbolProvider{Value: true},
+			ExecuteCommandProvider:  &protocol.ExecuteCommandOptions{},
 			SemanticTokensProvider: &protocol.SemanticTokensOptions{
 				Legend: protocol.SemanticTokensLegend{
 					TokenTypes:     semanticTokenTypes,
@@ -160,15 +170,6 @@ func (s *ServerV2) DidCloseTextDocument(_ protocol.Conn, params *protocol.DidClo
 
 	// Remove the document and invalidate cache.
 	s.host.RemoveDocument(uri)
-
-	// Clean up completion resolver state.
-	s.memberResolversMu.Lock()
-	delete(s.memberResolvers, uri)
-	s.memberResolversMu.Unlock()
-
-	s.rangesMu.Lock()
-	delete(s.ranges, uri)
-	s.rangesMu.Unlock()
 
 	s.codeActionsResolversMu.Lock()
 	delete(s.codeActionsResolvers, uri)

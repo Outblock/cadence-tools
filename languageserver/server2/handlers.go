@@ -2,6 +2,7 @@ package server2
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"regexp"
@@ -19,12 +20,13 @@ import (
 // docStringDeprecationPattern matches "deprecated" in doc strings.
 // Inlined from lint package to avoid pulling in flow-go-sdk/gRPC dependencies.
 var docStringDeprecationPattern = regexp.MustCompile(`(?i)[\t *_]*deprecated\b`)
+var memberAccessCompletionPattern = regexp.MustCompile(`(?:\.|\?\.)[A-Za-z_0-9]*$`)
 
 // CompletionItemData is the data attached to a CompletionItem so
-// ResolveCompletionItem can look up the member resolver or range.
+// ResolveCompletionItem can look up the completion session item.
 type CompletionItemData struct {
-	URI protocol.DocumentURI `json:"uri"`
-	ID  string               `json:"id"`
+	Session string `json:"session"`
+	ID      string `json:"id"`
 }
 
 // --- Helper methods ---
@@ -34,15 +36,52 @@ type CompletionItemData struct {
 func (s *ServerV2) checkerForDocument(uri DocumentURI) *sema.Checker {
 	cacheKey := CanonicalCacheKey(common.StringLocation(uri))
 	entry, ok := s.host.Cache().Get(cacheKey)
-	if !ok || entry.Checker == nil {
+	if ok && entry != nil && entry.Valid && entry.Checker != nil {
+		return entry.Checker
+	}
+
+	if _, ok := s.host.GetDocument(uri); !ok {
 		return nil
 	}
-	return entry.Checker
+
+	result := Analyze(context.Background(), s.host.Snapshot(), uri, s.config.ImportResolver)
+	return result.Checker
 }
 
 // getDocument retrieves the document for the given URI from the AnalysisHost.
 func (s *ServerV2) getDocument(uri DocumentURI) (Document, bool) {
 	return s.host.GetDocument(uri)
+}
+
+func (s *ServerV2) nextCompletionSession() string {
+	return strconv.FormatUint(s.nextCompletionSessionID.Add(1), 10)
+}
+
+func (s *ServerV2) storeCompletionSession(sessionID string, state completionSessionState) {
+	if len(state.memberResolvers) == 0 && len(state.ranges) == 0 {
+		return
+	}
+
+	s.completionSessionsMu.Lock()
+	defer s.completionSessionsMu.Unlock()
+
+	s.completionSessions[sessionID] = state
+	s.completionSessionOrder = append(s.completionSessionOrder, sessionID)
+	if len(s.completionSessionOrder) <= maxCompletionSessions {
+		return
+	}
+
+	evicted := s.completionSessionOrder[0]
+	s.completionSessionOrder = s.completionSessionOrder[1:]
+	delete(s.completionSessions, evicted)
+}
+
+func (s *ServerV2) completionSession(sessionID string) (completionSessionState, bool) {
+	s.completionSessionsMu.RLock()
+	defer s.completionSessionsMu.RUnlock()
+
+	session, ok := s.completionSessions[sessionID]
+	return session, ok
 }
 
 // --- Hover ---
@@ -725,17 +764,24 @@ func (s *ServerV2) Completion(
 	}
 
 	position := conversion.ProtocolToSemaPosition(params.Position)
+	sessionID := s.nextCompletionSession()
 
-	memberCompletions := s.memberCompletions(position, checker, uri)
+	memberCompletions, memberResolvers := s.memberCompletions(position, checker, sessionID)
 	if len(memberCompletions) > 0 {
+		s.storeCompletionSession(sessionID, completionSessionState{memberResolvers: memberResolvers})
 		return memberCompletions, nil
 	}
 
+	if isMemberAccessCompletionContext(document, params.Position) {
+		return items, nil
+	}
+
 	// Prioritize range completion items over other items
-	rangeCompletions := s.rangeCompletions(position, checker, uri)
+	rangeCompletions, rangeResolvers := s.rangeCompletions(position, checker, sessionID)
 	for _, item := range rangeCompletions {
 		item.SortText = "1" + item.Label
 	}
+	s.storeCompletionSession(sessionID, completionSessionState{ranges: rangeResolvers})
 	items = append(items, rangeCompletions...)
 
 	items = append(items, statementCompletionItems...)
@@ -776,8 +822,8 @@ func withCompletionItemInsertText(item *protocol.CompletionItem, insertText stri
 func (s *ServerV2) memberCompletions(
 	position sema.Position,
 	checker *sema.Checker,
-	uri DocumentURI,
-) (items []*protocol.CompletionItem) {
+	sessionID string,
+) (items []*protocol.CompletionItem, resolvers map[string]sema.MemberResolver) {
 
 	// The client asks for the column after the identifier,
 	// query the member accesses for the preceding position
@@ -785,22 +831,13 @@ func (s *ServerV2) memberCompletions(
 		position.Column -= 1
 	}
 	memberAccess := checker.PositionInfo.MemberAccesses.Find(position)
-
-	s.memberResolversMu.Lock()
-	delete(s.memberResolvers, uri)
-	s.memberResolversMu.Unlock()
-
 	if memberAccess == nil {
 		return
 	}
 
-	memberResolvers := memberAccess.AccessedType.GetMembers()
+	resolvers = memberAccess.AccessedType.GetMembers()
 
-	s.memberResolversMu.Lock()
-	s.memberResolvers[uri] = memberResolvers
-	s.memberResolversMu.Unlock()
-
-	for name, resolver := range memberResolvers {
+	for name, resolver := range resolvers {
 		kind := conversion.DeclarationKindToCompletionItemType(resolver.Kind)
 		commitCharacters := declarationKindCommitCharacters(resolver.Kind)
 
@@ -809,8 +846,8 @@ func (s *ServerV2) memberCompletions(
 			Kind:             kind,
 			CommitCharacters: commitCharacters,
 			Data: CompletionItemData{
-				URI: protocol.DocumentURI(uri),
-				ID:  name,
+				Session: sessionID,
+				ID:      name,
 			},
 		}
 
@@ -826,30 +863,22 @@ func (s *ServerV2) memberCompletions(
 		items = append(items, item)
 	}
 
-	return items
+	return items, resolvers
 }
 
 func (s *ServerV2) rangeCompletions(
 	position sema.Position,
 	checker *sema.Checker,
-	uri DocumentURI,
-) (items []*protocol.CompletionItem) {
+	sessionID string,
+) (items []*protocol.CompletionItem, resolvers map[string]sema.Range) {
 
 	ranges := checker.PositionInfo.Ranges.FindAll(position)
-
-	s.rangesMu.Lock()
-	delete(s.ranges, uri)
-	s.rangesMu.Unlock()
 
 	if ranges == nil {
 		return
 	}
 
-	resolvers := make(map[string]sema.Range, len(ranges))
-
-	s.rangesMu.Lock()
-	s.ranges[uri] = resolvers
-	s.rangesMu.Unlock()
+	resolvers = make(map[string]sema.Range, len(ranges))
 
 	for index, r := range ranges {
 		id := strconv.Itoa(index)
@@ -858,8 +887,8 @@ func (s *ServerV2) rangeCompletions(
 			Label: r.Identifier,
 			Kind:  kind,
 			Data: CompletionItemData{
-				URI: protocol.DocumentURI(uri),
-				ID:  id,
+				Session: sessionID,
+				ID:      id,
 			},
 		}
 
@@ -893,7 +922,7 @@ func (s *ServerV2) rangeCompletions(
 		items = append(items, item)
 	}
 
-	return items
+	return items, resolvers
 }
 
 func (s *ServerV2) prepareFunctionMemberCompletionItem(
@@ -967,8 +996,8 @@ func (s *ServerV2) ResolveCompletionItem(
 	if !ok {
 		// Try to extract from map (JSON deserialization may produce a map)
 		if m, ok := item.Data.(map[string]interface{}); ok {
-			if uriVal, ok := m["uri"].(string); ok {
-				data.URI = protocol.DocumentURI(uriVal)
+			if sessionVal, ok := m["session"].(string); ok {
+				data.Session = sessionVal
 			}
 			if idVal, ok := m["id"].(string); ok {
 				data.ID = idVal
@@ -978,27 +1007,24 @@ func (s *ServerV2) ResolveCompletionItem(
 		}
 	}
 
-	if s.maybeResolveMember(DocumentURI(data.URI), data.ID, result) {
+	if s.maybeResolveMember(data.Session, data.ID, result) {
 		return result, nil
 	}
 
-	if s.maybeResolveRange(DocumentURI(data.URI), data.ID, result) {
+	if s.maybeResolveRange(data.Session, data.ID, result) {
 		return result, nil
 	}
 
 	return result, nil
 }
 
-func (s *ServerV2) maybeResolveMember(uri DocumentURI, id string, result *protocol.CompletionItem) bool {
-	s.memberResolversMu.RLock()
-	memberResolvers, ok := s.memberResolvers[uri]
-	s.memberResolversMu.RUnlock()
-
+func (s *ServerV2) maybeResolveMember(sessionID, id string, result *protocol.CompletionItem) bool {
+	session, ok := s.completionSession(sessionID)
 	if !ok {
 		return false
 	}
 
-	resolver, ok := memberResolvers[id]
+	resolver, ok := session.memberResolvers[id]
 	if !ok {
 		return false
 	}
@@ -1056,16 +1082,13 @@ func (s *ServerV2) maybeResolveMember(uri DocumentURI, id string, result *protoc
 	return true
 }
 
-func (s *ServerV2) maybeResolveRange(uri DocumentURI, id string, result *protocol.CompletionItem) bool {
-	s.rangesMu.RLock()
-	ranges, ok := s.ranges[uri]
-	s.rangesMu.RUnlock()
-
+func (s *ServerV2) maybeResolveRange(sessionID, id string, result *protocol.CompletionItem) bool {
+	session, ok := s.completionSession(sessionID)
 	if !ok {
 		return false
 	}
 
-	r, ok := ranges[id]
+	r, ok := session.ranges[id]
 	if !ok {
 		return false
 	}
@@ -1394,6 +1417,33 @@ func (s *ServerV2) ExecuteCommand(
 }
 
 // --- Document helpers (used by CodeAction split-lines) ---
+
+func isMemberAccessCompletionContext(doc Document, position protocol.Position) bool {
+	linePrefix, ok := documentLinePrefixAtPosition(doc, position)
+	if !ok {
+		return false
+	}
+	return memberAccessCompletionPattern.MatchString(linePrefix)
+}
+
+func documentLinePrefixAtPosition(doc Document, position protocol.Position) (string, bool) {
+	lines := strings.Split(doc.Text, "\n")
+	lineIndex := int(position.Line)
+	if lineIndex < 0 || lineIndex >= len(lines) {
+		return "", false
+	}
+
+	line := lines[lineIndex]
+	column := int(position.Character)
+	if column < 0 {
+		return "", false
+	}
+	if column > len(line) {
+		column = len(line)
+	}
+
+	return line[:column], true
+}
 
 // documentOffset computes the byte offset for a given 1-based line and 0-based column.
 func documentOffset(text string, line, column int) int {

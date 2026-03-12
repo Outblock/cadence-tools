@@ -3,6 +3,7 @@ package server2
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -236,6 +237,180 @@ func TestCompletionReturnsKeywords(t *testing.T) {
 	assert.True(t, labels["if"], "should contain 'if' keyword")
 	assert.True(t, labels["for"], "should contain 'for' keyword")
 	assert.True(t, labels["return"], "should contain 'return' keyword")
+}
+
+func TestCompletionAnalyzesDocumentOnDemandBeforeDebounce(t *testing.T) {
+	srv := NewServerV2(ServerConfig{
+		CacheCapacity: 64,
+		DebounceDelay: time.Hour,
+	})
+	conn := &mockConn{}
+	_, err := srv.Initialize(conn, &protocol.InitializeParams{})
+	require.NoError(t, err)
+
+	uri := protocol.DocumentURI("file:///completion-debounce-open.cdc")
+	code := `access(all) struct Greeter {
+    access(all) fun greet() {}
+    access(all) fun wave() {}
+    init() {}
+}
+
+access(all) fun main() {
+    let greeter = Greeter()
+    greeter.greet()
+}`
+
+	err = srv.DidOpenTextDocument(conn, &protocol.DidOpenTextDocumentParams{
+		TextDocument: protocol.TextDocumentItem{
+			URI:        uri,
+			LanguageID: "cadence",
+			Version:    1,
+			Text:       code,
+		},
+	})
+	require.NoError(t, err)
+
+	items, err := srv.Completion(conn, &protocol.CompletionParams{
+		TextDocumentPositionParams: protocol.TextDocumentPositionParams{
+			TextDocument: protocol.TextDocumentIdentifier{URI: uri},
+			Position:     protocol.Position{Line: 8, Character: 13},
+		},
+	})
+	require.NoError(t, err)
+
+	labels := make(map[string]bool)
+	for _, item := range items {
+		labels[item.Label] = true
+	}
+
+	assert.True(t, labels["greet"], "should analyze the latest document even before debounced diagnostics run")
+	assert.True(t, labels["wave"], "should include semantic member completions")
+	assert.False(t, labels["while"], "member access should not fall back to statement keywords")
+	assert.False(t, labels["destroy"], "member access should not fall back to expression keywords")
+}
+
+func TestCompletionUsesLatestDocumentStateBeforeDebounce(t *testing.T) {
+	srv := NewServerV2(ServerConfig{
+		CacheCapacity: 64,
+		DebounceDelay: time.Hour,
+	})
+	conn := &mockConn{}
+	_, err := srv.Initialize(conn, &protocol.InitializeParams{})
+	require.NoError(t, err)
+
+	uri := protocol.DocumentURI("file:///completion-debounce-change.cdc")
+	initialCode := `access(all) struct Greeter {
+    access(all) fun greet() {}
+    init() {}
+}
+
+access(all) fun main() {
+    let greeter = Greeter()
+    greeter.greet()
+}`
+	updatedCode := `access(all) struct Greeter {
+    access(all) fun wave() {}
+    init() {}
+}
+
+access(all) fun main() {
+    let greeter = Greeter()
+    greeter.wave()
+}`
+
+	err = srv.DidOpenTextDocument(conn, &protocol.DidOpenTextDocumentParams{
+		TextDocument: protocol.TextDocumentItem{
+			URI:        uri,
+			LanguageID: "cadence",
+			Version:    1,
+			Text:       initialCode,
+		},
+	})
+	require.NoError(t, err)
+
+	err = srv.DidChangeTextDocument(conn, &protocol.DidChangeTextDocumentParams{
+		TextDocument: protocol.VersionedTextDocumentIdentifier{
+			TextDocumentIdentifier: protocol.TextDocumentIdentifier{URI: uri},
+			Version:                2,
+		},
+		ContentChanges: []protocol.TextDocumentContentChangeEvent{
+			{Text: updatedCode},
+		},
+	})
+	require.NoError(t, err)
+
+	items, err := srv.Completion(conn, &protocol.CompletionParams{
+		TextDocumentPositionParams: protocol.TextDocumentPositionParams{
+			TextDocument: protocol.TextDocumentIdentifier{URI: uri},
+			Position:     protocol.Position{Line: 7, Character: 13},
+		},
+	})
+	require.NoError(t, err)
+
+	labels := make(map[string]bool)
+	for _, item := range items {
+		labels[item.Label] = true
+	}
+
+	assert.True(t, labels["wave"], "should use the changed buffer immediately")
+	assert.False(t, labels["greet"], "should not resolve completion from the invalidated pre-change checker")
+}
+
+func TestResolveCompletionItemSurvivesSubsequentCompletionRequests(t *testing.T) {
+	srv := newTestServer()
+	conn := &mockConn{}
+	_, err := srv.Initialize(conn, &protocol.InitializeParams{})
+	require.NoError(t, err)
+
+	uri := protocol.DocumentURI("file:///completion-resolve-session.cdc")
+	code := `access(all) struct Greeter {
+    access(all) fun greet() {}
+    init() {}
+}
+
+access(all) struct Counter {
+    access(all) fun bump() {}
+    init() {}
+}
+
+access(all) fun main() {
+    let greeter = Greeter()
+    greeter.greet()
+    let counter = Counter()
+    counter.bump()
+}`
+	openAndCheck(t, srv, conn, uri, code)
+
+	firstItems, err := srv.Completion(conn, &protocol.CompletionParams{
+		TextDocumentPositionParams: protocol.TextDocumentPositionParams{
+			TextDocument: protocol.TextDocumentIdentifier{URI: uri},
+			Position:     protocol.Position{Line: 12, Character: 13},
+		},
+	})
+	require.NoError(t, err)
+
+	var greetItem *protocol.CompletionItem
+	for _, item := range firstItems {
+		if item.Label == "greet" {
+			greetItem = item
+			break
+		}
+	}
+	require.NotNil(t, greetItem, "expected greet member completion")
+
+	_, err = srv.Completion(conn, &protocol.CompletionParams{
+		TextDocumentPositionParams: protocol.TextDocumentPositionParams{
+			TextDocument: protocol.TextDocumentIdentifier{URI: uri},
+			Position:     protocol.Position{Line: 14, Character: 13},
+		},
+	})
+	require.NoError(t, err)
+
+	resolved, err := srv.ResolveCompletionItem(conn, greetItem)
+	require.NoError(t, err)
+	require.NotNil(t, resolved)
+	assert.NotEmpty(t, resolved.Detail, "completion resolve should still have access to the original session data")
+	assert.Contains(t, resolved.Detail, "greet")
 }
 
 func TestCompletionReturnsEmptyForNoChecker(t *testing.T) {

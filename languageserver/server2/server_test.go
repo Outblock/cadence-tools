@@ -16,12 +16,12 @@ type mockConn struct {
 	diagnostics []*protocol.PublishDiagnosticsParams
 }
 
-func (m *mockConn) Notify(method string, params any) error { return nil }
+func (m *mockConn) Notify(method string, params any) error         { return nil }
 func (m *mockConn) ShowMessage(params *protocol.ShowMessageParams) {}
 func (m *mockConn) ShowMessageRequest(params *protocol.ShowMessageRequestParams) (*protocol.MessageActionItem, error) {
 	return nil, nil
 }
-func (m *mockConn) LogMessage(params *protocol.LogMessageParams)          {}
+func (m *mockConn) LogMessage(params *protocol.LogMessageParams)                 {}
 func (m *mockConn) RegisterCapability(params *protocol.RegistrationParams) error { return nil }
 
 func (m *mockConn) PublishDiagnostics(params *protocol.PublishDiagnosticsParams) error {
@@ -75,6 +75,10 @@ func TestInitializeReturnsCapabilities(t *testing.T) {
 	assert.NotNil(t, caps.RenameProvider)
 	assert.NotNil(t, caps.CodeActionProvider)
 	assert.NotNil(t, caps.InlayHintProvider)
+
+	assert.Equal(t, []string{"."}, caps.CompletionProvider.TriggerCharacters)
+	assert.True(t, caps.CompletionProvider.ResolveProvider)
+	assert.Equal(t, []string{"("}, caps.SignatureHelpProvider.TriggerCharacters)
 }
 
 func TestDidOpenTriggersDiagnostics(t *testing.T) {
