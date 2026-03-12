@@ -226,7 +226,7 @@ func Analyze(
 			// Check cache first.
 			cacheKey := CanonicalCacheKey(importedLocation)
 			if entry, found := snap.Cache.Get(cacheKey); found && entry.Valid && entry.Checker != nil {
-				snap.DepGraph.AddEdge(uri, cacheKey)
+				snap.DepGraph.AddEdge(CanonicalCacheKey(location), cacheKey)
 				return sema.ElaborationImport{
 					Elaboration: entry.Checker.Elaboration,
 				}, nil
@@ -265,7 +265,7 @@ func Analyze(
 			})
 
 			// Record dependency.
-			snap.DepGraph.AddEdge(uri, cacheKey)
+			snap.DepGraph.AddEdge(CanonicalCacheKey(location), cacheKey)
 
 			return sema.ElaborationImport{
 				Elaboration: subChecker.Elaboration,

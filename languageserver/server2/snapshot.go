@@ -1,6 +1,10 @@
 package server2
 
-import "sync"
+import (
+	"sync"
+
+	"github.com/onflow/cadence/common"
+)
 
 // AnalysisHost owns all mutable state for the language server.
 // Writes are expected on the main goroutine; Snapshot() produces
@@ -31,12 +35,15 @@ func (h *AnalysisHost) UpdateDocument(uri DocumentURI, text string, version int3
 	h.revision++
 	h.docs.Set(uri, text, version)
 
+	// Use canonical cache key to match what Analyze stores.
+	cacheKey := CanonicalCacheKey(common.StringLocation(uri))
+
 	// Invalidate transitive dependents first, then the file itself.
-	dependents := h.depGraph.Invalidate(uri)
+	dependents := h.depGraph.Invalidate(cacheKey)
 	for _, dep := range dependents {
 		h.cache.Delete(dep)
 	}
-	h.cache.Delete(uri)
+	h.cache.Delete(cacheKey)
 }
 
 // RemoveDocument removes a document, increments the revision,
@@ -48,14 +55,16 @@ func (h *AnalysisHost) RemoveDocument(uri DocumentURI) {
 
 	h.revision++
 
+	cacheKey := CanonicalCacheKey(common.StringLocation(uri))
+
 	// Invalidate transitive dependents before clearing edges.
-	dependents := h.depGraph.Invalidate(uri)
+	dependents := h.depGraph.Invalidate(cacheKey)
 	for _, dep := range dependents {
 		h.cache.Delete(dep)
 	}
-	h.cache.Delete(uri)
+	h.cache.Delete(cacheKey)
 
-	h.depGraph.ClearDependenciesOf(uri)
+	h.depGraph.ClearDependenciesOf(cacheKey)
 	h.docs.Delete(uri)
 }
 
